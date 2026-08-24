@@ -16,7 +16,7 @@
 
 <div id="app">
 
-  <!-- HEADER (hidden on profile screen) -->
+  <!-- HEADER (hidden on profile/household screens) -->
   <header id="app-header" class="hidden">
     <button id="btn-home" class="icon-btn" title="Home">🏠</button>
     <div class="header-info">
@@ -47,22 +47,51 @@
       <p class="subtitle">Who's studying today?</p>
       <div id="profile-list" class="profile-grid"></div>
       <div class="new-profile-form">
-        <input type="text" id="new-profile-name" placeholder="Add a new student's name" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="new-profile-name" placeholder="Student's name" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="new-profile-grade" class="grade-field" placeholder="Grade" spellcheck="false" autocomplete="off" autocorrect="off">
         <button id="btn-add-profile" class="btn btn-primary">+ Add Student</button>
       </div>
       <div id="household-info" class="household-info hidden"></div>
+    </section>
+
+    <!-- SCREEN: Catalog connect (word lists live here, separate from household privacy) -->
+    <section id="screen-catalog-setup" class="screen">
+      <h2>📚 Connect a Word Catalog</h2>
+      <p class="hint">Word lists live in a catalog, organized by grade and week — separate from your private scores. Keep it just for your household, or give it a memorable code (like your school's name) to share the same lists with another family. Their scores stay completely separate from yours either way.</p>
+      <div class="new-profile-form">
+        <input type="text" id="catalog-code-input" placeholder="Catalog code (or leave blank)" spellcheck="false" autocomplete="off" autocorrect="off">
+        <button id="btn-connect-catalog" class="btn btn-primary">Connect</button>
+      </div>
+      <p class="hint" style="margin-top:10px;">If the code doesn't exist yet, it'll be created. Leave it blank to get a private one just for your household.</p>
+    </section>
+
+    <!-- SCREEN: Catalog editor (bulk import a whole year) -->
+    <section id="screen-catalog-editor" class="screen">
+      <h2>📚 Manage Word Catalog</h2>
+      <p class="hint">Paste a whole year at once. Start each grade with a line like <code>GRADE 7 (starts 2026-09-01)</code>, then list words for each week — separate weeks with a blank line. Add a comma and a definition for vocab practice.</p>
+      <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 7 (starts 2026-09-01)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;friend&#10;habit, something you do often" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+      <button id="btn-preview-catalog" class="btn btn-secondary">Preview</button>
+      <div id="catalog-preview" class="results-list hidden"></div>
+      <button id="btn-save-catalog" class="btn btn-primary hidden">Save to Catalog</button>
+      <p class="hint" style="text-align:center;margin-top:18px;">Catalog code: <strong id="catalog-code-display"></strong></p>
+      <button id="catalog-editor-exit" class="btn btn-ghost">Back</button>
+    </section>
+
+    <!-- SCREEN: Week picker -->
+    <section id="screen-week-picker" class="screen">
+      <h2>Choose a Week</h2>
+      <p class="hint">Pick any week — review an old one, or try a different grade's list.</p>
+      <div id="week-picker-list" class="results-list"></div>
+      <button id="week-picker-exit" class="btn btn-ghost">Back</button>
     </section>
 
     <!-- SCREEN: Home menu -->
     <section id="screen-home" class="screen">
       <h2 class="week-label" id="home-week-label">This Week's Words</h2>
       <p class="word-count" id="home-word-count">0 words</p>
+      <button id="btn-change-week" class="btn btn-secondary change-week-btn">🔁 Change Week</button>
 
       <div class="menu-grid">
-        <button class="menu-card" data-nav="edit">
-          <span class="menu-icon">📝</span>
-          <span>Edit This Week's List</span>
-        </button>
         <button class="menu-card" data-nav="flashcard">
           <span class="menu-icon">🔊</span>
           <span>Look &amp; Say</span>
@@ -88,25 +117,7 @@
           <span>Progress</span>
         </button>
       </div>
-    </section>
-
-    <!-- SCREEN: Edit word list -->
-    <section id="screen-edit" class="screen">
-      <h2>Edit This Week's List</h2>
-      <p class="hint">Add words one at a time, or paste a whole list below (one word per line — add a comma and the definition if you want vocab practice too. Example: <em>necessary, absolutely required</em>).</p>
-
-      <div class="paste-box">
-        <textarea id="paste-input" rows="4" placeholder="necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
-        <button id="btn-import-paste" class="btn btn-secondary">Add These Words</button>
-      </div>
-
-      <div id="word-rows" class="word-rows"></div>
-      <button id="btn-add-row" class="btn btn-ghost">+ Add One Word</button>
-
-      <div class="edit-actions">
-        <button id="btn-save-week" class="btn btn-primary">Save List</button>
-        <button id="btn-new-week" class="btn btn-warning">Start New Week (Archive This List)</button>
-      </div>
+      <button id="btn-manage-catalog" class="btn btn-ghost">📚 Manage Word Catalog</button>
     </section>
 
     <!-- SCREEN: Flashcard (Look & Say) -->
@@ -280,7 +291,7 @@
       <h2>Progress</h2>
       <h3>This Week</h3>
       <div id="progress-current" class="results-list"></div>
-      <h3>Past Weeks</h3>
+      <h3>Other Weeks You've Practiced</h3>
       <div id="progress-history" class="results-list"></div>
       <button id="progress-exit" class="btn btn-primary">Back to Menu</button>
     </section>

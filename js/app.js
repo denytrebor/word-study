@@ -6,8 +6,7 @@
    * ------------------------------------------------------------------- */
   const PROFILES_KEY = "ws_profiles";
   const ACTIVE_KEY = "ws_active_profile";
-  const weekKey = (id) => `ws_week_${id}`;
-  const historyKey = (id) => `ws_history_${id}`;
+  const LOCAL_CATALOG = "__local__";
 
   function load(key, fallback) {
     try {
@@ -26,16 +25,31 @@
   function getActiveProfileId() { return localStorage.getItem(ACTIVE_KEY); }
   function setActiveProfileId(id) { localStorage.setItem(ACTIVE_KEY, id); }
 
-  function getWeek(profileId) { return load(weekKey(profileId), null); }
-  function saveWeek(profileId, week) {
-    save(weekKey(profileId), week);
-    if (firestoreReady()) Sync.pushWeek(profileId, week);
-  }
-  function getHistory(profileId) { return load(historyKey(profileId), []); }
-  function saveHistory(profileId, hist) { save(historyKey(profileId), hist); }
-
   function firestoreReady() {
     return typeof Sync !== "undefined" && !!Sync.getHouseholdCode();
+  }
+
+  // The catalog code this household is using — a fully offline/local-only
+  // device (no household connected) gets one implicit private catalog with
+  // no code to manage at all.
+  function getCatalogCode() {
+    if (firestoreReady() && typeof Sync !== "undefined") return Sync.getCatalogCode();
+    return LOCAL_CATALOG;
+  }
+
+  function catalogWeeksKey(code) { return `ws_catalog_weeks_${code}`; }
+  function progressKey(profileId, weekId) { return `ws_progress_${profileId}_${weekId}`; }
+  function progressIndexKey(profileId) { return `ws_progress_index_${profileId}`; }
+  function selectedWeekKey(profileId) { return `ws_selected_week_${profileId}`; }
+
+  function saveProgressLocal(profileId, weekId, progress) {
+    save(progressKey(profileId, weekId), progress);
+    const idx = load(progressIndexKey(profileId), []);
+    if (!idx.includes(weekId)) { idx.push(weekId); save(progressIndexKey(profileId), idx); }
+  }
+  function saveProgress(profileId, weekId, progress) {
+    saveProgressLocal(profileId, weekId, progress);
+    if (firestoreReady()) Sync.pushProgress(profileId, weekId, progress);
   }
 
   function updateLocalProfileStars(id, stars) {
@@ -49,6 +63,10 @@
     return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
   }
 
+  function slugify(s) {
+    return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "g";
+  }
+
   function shuffle(arr) {
     const a = arr.slice();
     for (let i = a.length - 1; i > 0; i--) {
@@ -58,33 +76,29 @@
     return a;
   }
 
-  function freshWord(text, definition) {
-    return {
-      id: uid(),
-      text: text.trim(),
-      definition: (definition || "").trim(),
-      spelling: { correct: 0, attempts: 0 },
-      vocab: { known: 0, attempts: 0 },
-    };
+  // Local-calendar-date strings (not UTC) — using toISOString() here would
+  // shift the date for anyone east of UTC, and could roll "today" over
+  // hours early/late for anyone west of it.
+  function dateToLocalStr(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
+  function todayLocalStr() { return dateToLocalStr(new Date()); }
 
-  function freshWeek() {
-    const now = Date.now();
-    return {
-      label: "Week of " + new Date(now).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-      startedAt: now,
-      words: [],
-    };
+  function generateCode(len) {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let s = "";
+    for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+    return s;
   }
 
   /* ---------------------------------------------------------------------
    * App state
    * ------------------------------------------------------------------- */
   const state = {
-    profile: null, // active profile object
-    week: null,
-    editingWords: [],
-    session: null, // active study session object
+    profile: null,       // active profile {id, name, avatar, stars, grade}
+    catalogWeeks: [],     // every week in the connected catalog, all grades
+    selectedWeek: null,   // the catalog week currently being studied
+    progress: null,       // this profile's per-word stats for selectedWeek
   };
 
   /* ---------------------------------------------------------------------
@@ -183,6 +197,10 @@
     if (firestoreReady()) Sync.pushProfile(state.profile);
   }
 
+  function escapeAttr(str) {
+    return (str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  }
+
   /* ---------------------------------------------------------------------
    * Word status (for progress + repetition weighting)
    * ------------------------------------------------------------------- */
@@ -205,7 +223,8 @@
     list.forEach((p) => {
       const btn = document.createElement("button");
       btn.className = "profile-card";
-      btn.innerHTML = `<span class="avatar">${p.avatar}</span>${p.name}`;
+      const gradeLine = p.grade ? `<br><span style="font-weight:400;font-size:.75rem;color:var(--muted)">Grade ${escapeAttr(p.grade)}</span>` : "";
+      btn.innerHTML = `<span class="avatar">${p.avatar}</span>${escapeAttr(p.name)}${gradeLine}`;
       btn.addEventListener("click", () => selectProfile(p.id));
       wrap.appendChild(btn);
     });
@@ -233,7 +252,7 @@
   function watchProfilesList() {
     if (!firestoreReady()) return;
     Sync.watchProfiles((remoteList) => {
-      saveProfiles(remoteList.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, stars: p.stars })));
+      saveProfiles(remoteList.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, stars: p.stars, grade: p.grade || "" })));
       renderProfiles();
     });
   }
@@ -245,18 +264,18 @@
       updateLocalProfileStars(state.profile.id, data.stars);
       refreshHeader();
     }
+  }
+
+  function applyRemoteProgressUpdate(data) {
     const activeId = (document.querySelector(".screen.active") || {}).id;
     const safeToApply = activeId === "screen-home" || activeId === "screen-progress";
-    // Only swap state.week in from a remote snapshot when nothing else could
-    // be actively mutating word objects by reference (a study session or the
-    // list editor) — otherwise a remote echo mid-session can silently
-    // orphan in-progress local edits.
-    if (safeToApply && data.currentWeek && JSON.stringify(data.currentWeek) !== JSON.stringify(state.week)) {
-      save(weekKey(state.profile.id), data.currentWeek);
-      state.week = data.currentWeek;
-      if (activeId === "screen-home") renderHome();
-      else openProgress();
-    }
+    if (!safeToApply) return;
+    if (!state.progress || !data || data.weekId !== state.progress.weekId) return;
+    if (JSON.stringify(data) === JSON.stringify(state.progress)) return;
+    state.progress = data;
+    saveProgressLocal(state.profile.id, data.weekId, data);
+    if (activeId === "screen-home") renderHome();
+    else openProgress();
   }
 
   async function selectProfile(id) {
@@ -265,47 +284,30 @@
     if (!p) return;
     state.profile = p;
     setActiveProfileId(id);
-
-    let week = getWeek(id);
-    // First time this profile is opened on this device: check Firestore
-    // before assuming there's no data, so we don't clobber a real word
-    // list that already exists on another device with a blank one.
-    if (!week && firestoreReady()) {
-      try {
-        const remote = await Sync.fetchProfile(id);
-        if (remote && remote.currentWeek) {
-          week = remote.currentWeek;
-          save(weekKey(id), week);
-        }
-      } catch (e) { /* fall through to local fresh week */ }
-    }
-    if (!week) {
-      week = freshWeek();
-      saveWeek(id, week);
-    }
-    state.week = week;
     refreshHeader();
-    renderHome();
-    showScreen("home");
     if (firestoreReady()) Sync.watchProfile(id, applyRemoteProfileUpdate);
+    await loadCatalogAndWeek();
   }
 
   document.getElementById("btn-add-profile").addEventListener("click", () => {
     const input = document.getElementById("new-profile-name");
+    const gradeInput = document.getElementById("new-profile-grade");
     const name = input.value.trim();
     if (!name) { toast("Type a name first"); return; }
+    const grade = gradeInput.value.trim();
     const profiles = getProfiles();
-    const p = { id: uid(), name, avatar: AVATARS[profiles.length % AVATARS.length], stars: 0 };
+    const p = { id: uid(), name, avatar: AVATARS[profiles.length % AVATARS.length], stars: 0, grade };
     profiles.push(p);
     saveProfiles(profiles);
     input.value = "";
+    gradeInput.value = "";
     renderProfiles();
     if (firestoreReady()) Sync.pushProfile(p);
     selectProfile(p.id);
   });
-  document.getElementById("new-profile-name").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") document.getElementById("btn-add-profile").click();
-  });
+  function addProfileOnEnter(e) { if (e.key === "Enter") document.getElementById("btn-add-profile").click(); }
+  document.getElementById("new-profile-name").addEventListener("keydown", addProfileOnEnter);
+  document.getElementById("new-profile-grade").addEventListener("keydown", addProfileOnEnter);
 
   document.getElementById("btn-switch-profile").addEventListener("click", () => {
     renderProfiles();
@@ -318,25 +320,284 @@
   });
 
   /* ---------------------------------------------------------------------
+   * CATALOG (shared word lists, organized by grade + week)
+   * ------------------------------------------------------------------- */
+
+  function computeAutoWeek(weeks, grade) {
+    const gradeWeeks = weeks.filter((w) => w.grade === grade).sort((a, b) => (a.weekStartDate < b.weekStartDate ? -1 : 1));
+    if (!gradeWeeks.length) return null;
+    const today = todayLocalStr();
+    let chosen = gradeWeeks[0];
+    for (const w of gradeWeeks) {
+      if (w.weekStartDate <= today) chosen = w;
+      else break;
+    }
+    return chosen;
+  }
+
+  async function loadProgressForWeek(profileId, week) {
+    let progress = load(progressKey(profileId, week.id), null);
+    if (!progress && firestoreReady()) {
+      try { progress = await Sync.fetchProgress(profileId, week.id); } catch (e) { /* ignore */ }
+    }
+    const freshStat = () => ({ spelling: { correct: 0, attempts: 0 }, vocab: { known: 0, attempts: 0 } });
+    if (!progress) {
+      progress = {
+        weekId: week.id,
+        grade: week.grade,
+        label: week.label,
+        words: week.words.map((w) => Object.assign({ id: w.id, text: w.text, definition: w.definition }, freshStat())),
+      };
+    } else {
+      // Reconcile in case the catalog's word list changed since last practiced.
+      const existingById = new Map(progress.words.map((w) => [w.id, w]));
+      progress.words = week.words.map((w) => existingById.get(w.id) || Object.assign({ id: w.id, text: w.text, definition: w.definition }, freshStat()));
+      progress.label = week.label;
+      progress.grade = week.grade;
+    }
+    saveProgressLocal(profileId, week.id, progress);
+    return progress;
+  }
+
+  async function selectWeek(week, manual) {
+    state.selectedWeek = week;
+    if (manual) save(selectedWeekKey(state.profile.id), week.id);
+    state.progress = await loadProgressForWeek(state.profile.id, week);
+    if (firestoreReady()) Sync.watchProgress(state.profile.id, week.id, applyRemoteProgressUpdate);
+    renderHome();
+    showScreen("home");
+  }
+
+  async function loadCatalogAndWeek() {
+    let code;
+    if (!firestoreReady()) {
+      code = LOCAL_CATALOG;
+    } else {
+      code = Sync.getCatalogCode();
+      if (!code) {
+        try { code = await Sync.fetchHouseholdCatalogCode(); } catch (e) { code = null; }
+        if (code) Sync.cacheCatalogCode(code);
+      }
+      if (!code) {
+        state.catalogWeeks = [];
+        state.selectedWeek = null;
+        state.progress = null;
+        showScreen("catalog-setup");
+        return;
+      }
+    }
+
+    state.catalogWeeks = load(catalogWeeksKey(code), []);
+    if (firestoreReady()) {
+      try {
+        const remote = await Sync.fetchCatalogWeeks(code);
+        if (remote.length) { state.catalogWeeks = remote; save(catalogWeeksKey(code), remote); }
+      } catch (e) { /* fall back to local cache */ }
+    }
+
+    let week = null;
+    const savedWeekId = localStorage.getItem(selectedWeekKey(state.profile.id));
+    if (savedWeekId) week = state.catalogWeeks.find((w) => w.id === savedWeekId);
+    if (!week && state.profile.grade) week = computeAutoWeek(state.catalogWeeks, state.profile.grade);
+    if (!week && state.catalogWeeks.length) week = state.catalogWeeks[0];
+
+    if (!week) {
+      state.selectedWeek = null;
+      state.progress = null;
+      renderHome();
+      showScreen("home");
+      return;
+    }
+    await selectWeek(week, false);
+  }
+
+  document.getElementById("btn-connect-catalog").addEventListener("click", async () => {
+    const input = document.getElementById("catalog-code-input");
+    let code = input.value.trim();
+    const btn = document.getElementById("btn-connect-catalog");
+    btn.disabled = true;
+    try {
+      if (!code) code = generateCode(8);
+      await Sync.connectCatalog(code);
+      input.value = "";
+      toast("Connected! Catalog code: " + code);
+      await loadCatalogAndWeek();
+    } catch (e) {
+      toast("Couldn't connect — check your internet and try again.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  function parseCatalogText(text) {
+    const lines = text.split("\n");
+    const weeks = [];
+    let currentGrade = null;
+    let currentStart = null;
+    let weekNum = 0;
+    let block = [];
+
+    function flushBlock() {
+      if (block.length === 0) return;
+      weekNum++;
+      const words = block
+        .map((line) => {
+          const idx = line.indexOf(",");
+          const wtext = idx === -1 ? line : line.slice(0, idx);
+          const definition = idx === -1 ? "" : line.slice(idx + 1).trim();
+          return { id: uid(), text: wtext.trim(), definition };
+        })
+        .filter((w) => w.text);
+      if (words.length && currentGrade) {
+        const start = new Date(currentStart + "T00:00:00");
+        start.setDate(start.getDate() + (weekNum - 1) * 7);
+        const dateStr = dateToLocalStr(start);
+        weeks.push({
+          id: `${slugify(currentGrade)}-w${weekNum}`,
+          grade: currentGrade,
+          weekNumber: weekNum,
+          weekStartDate: dateStr,
+          label: `Grade ${currentGrade} · Week ${weekNum}`,
+          words,
+        });
+      }
+      block = [];
+    }
+
+    lines.forEach((raw) => {
+      const line = raw.trim();
+      const gradeMatch = line.match(/^grade\s+(\S+)\s*(?:\(starts\s+(\d{4}-\d{2}-\d{2})\))?/i);
+      if (gradeMatch) {
+        flushBlock();
+        currentGrade = gradeMatch[1];
+        currentStart = gradeMatch[2] || todayLocalStr();
+        weekNum = 0;
+        return;
+      }
+      if (!line) { flushBlock(); return; }
+      block.push(line);
+    });
+    flushBlock();
+    return weeks;
+  }
+
+  function mergeWeeks(existing, incoming) {
+    const map = new Map(existing.map((w) => [w.id, w]));
+    incoming.forEach((w) => map.set(w.id, w));
+    return Array.from(map.values());
+  }
+
+  let catalogParsePreview = [];
+
+  function openCatalogEditor() {
+    const code = getCatalogCode();
+    document.getElementById("catalog-code-display").textContent = code === LOCAL_CATALOG ? "(this device only)" : code;
+    document.getElementById("catalog-paste-input").value = "";
+    document.getElementById("catalog-preview").classList.add("hidden");
+    document.getElementById("btn-save-catalog").classList.add("hidden");
+    showScreen("catalog-editor");
+  }
+  document.getElementById("btn-manage-catalog").addEventListener("click", openCatalogEditor);
+  document.getElementById("catalog-editor-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
+
+  document.getElementById("btn-preview-catalog").addEventListener("click", () => {
+    const text = document.getElementById("catalog-paste-input").value;
+    catalogParsePreview = parseCatalogText(text);
+    const box = document.getElementById("catalog-preview");
+    if (!catalogParsePreview.length) {
+      box.innerHTML = '<p class="hint">Nothing parsed yet — check the format (each grade needs a "GRADE ..." line).</p>';
+      box.classList.remove("hidden");
+      document.getElementById("btn-save-catalog").classList.add("hidden");
+      return;
+    }
+    box.innerHTML = "";
+    catalogParsePreview.forEach((w) => {
+      const row = document.createElement("div");
+      row.className = "result-row";
+      row.innerHTML = `<span>${escapeAttr(w.label)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${w.words.length} words · starts ${w.weekStartDate}</span>`;
+      box.appendChild(row);
+    });
+    box.classList.remove("hidden");
+    document.getElementById("btn-save-catalog").classList.remove("hidden");
+  });
+
+  document.getElementById("btn-save-catalog").addEventListener("click", async () => {
+    const code = getCatalogCode();
+    const btn = document.getElementById("btn-save-catalog");
+    btn.disabled = true;
+    try {
+      if (firestoreReady()) await Sync.saveCatalogWeeks(code, catalogParsePreview);
+      const key = catalogWeeksKey(code);
+      const merged = mergeWeeks(load(key, []), catalogParsePreview);
+      save(key, merged);
+      state.catalogWeeks = merged;
+      toast(`Saved ${catalogParsePreview.length} week${catalogParsePreview.length === 1 ? "" : "s"}!`);
+      document.getElementById("catalog-paste-input").value = "";
+      document.getElementById("catalog-preview").classList.add("hidden");
+      btn.classList.add("hidden");
+      if (state.profile) await loadCatalogAndWeek();
+    } catch (e) {
+      toast("Couldn't save — check your internet and try again.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /* ---------------------------------------------------------------------
+   * WEEK PICKER
+   * ------------------------------------------------------------------- */
+  function openWeekPicker() {
+    const wrap = document.getElementById("week-picker-list");
+    wrap.innerHTML = "";
+    if (!state.catalogWeeks.length) {
+      wrap.innerHTML = '<p class="hint">No weeks in the catalog yet. Add some from Manage Word Catalog.</p>';
+    } else {
+      const grades = Array.from(new Set(state.catalogWeeks.map((w) => w.grade))).sort();
+      grades.forEach((g) => {
+        const h = document.createElement("div");
+        h.className = "week-picker-group-title";
+        h.textContent = "Grade " + g;
+        wrap.appendChild(h);
+        state.catalogWeeks
+          .filter((w) => w.grade === g)
+          .sort((a, b) => a.weekNumber - b.weekNumber)
+          .forEach((w) => {
+            const btn = document.createElement("button");
+            btn.className = "result-row clickable";
+            btn.innerHTML = `<span>${escapeAttr(w.label)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${w.words.length} words</span>`;
+            btn.addEventListener("click", () => selectWeek(w, true));
+            wrap.appendChild(btn);
+          });
+      });
+    }
+    showScreen("week-picker");
+  }
+  document.getElementById("btn-change-week").addEventListener("click", openWeekPicker);
+  document.getElementById("week-picker-exit").addEventListener("click", () => showScreen("home"));
+
+  /* ---------------------------------------------------------------------
    * HOME SCREEN
    * ------------------------------------------------------------------- */
   function renderHome() {
-    state.week = getWeek(state.profile.id) || freshWeek();
-    document.getElementById("home-week-label").textContent = state.week.label;
-    const n = state.week.words.length;
+    if (!state.selectedWeek || !state.progress) {
+      document.getElementById("home-week-label").textContent = "No word list yet";
+      document.getElementById("home-word-count").textContent = "Add words from Manage Word Catalog to get started";
+      return;
+    }
+    document.getElementById("home-week-label").textContent = state.selectedWeek.label;
+    const n = state.progress.words.length;
     document.getElementById("home-word-count").textContent = n === 1 ? "1 word" : n + " words";
   }
 
   document.querySelectorAll(".menu-card[data-nav]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const target = btn.getAttribute("data-nav");
-      if (target !== "edit" && target !== "progress" && state.week.words.length === 0) {
-        toast("Add some words to this week's list first!");
-        openEdit();
+      if (target !== "progress" && (!state.progress || state.progress.words.length === 0)) {
+        toast("Add some words to the catalog first!");
+        openCatalogEditor();
         return;
       }
-      if (target === "edit") openEdit();
-      else if (target === "flashcard") openFlashcard();
+      if (target === "flashcard") openFlashcard();
       else if (target === "spelling") openSpelling(false);
       else if (target === "vocab") openVocab(false);
       else if (target === "test-setup") showScreen("test-setup");
@@ -346,98 +607,12 @@
   });
 
   /* ---------------------------------------------------------------------
-   * EDIT SCREEN
-   * ------------------------------------------------------------------- */
-  function openEdit() {
-    state.editingWords = state.week.words.slice();
-    renderWordRows();
-    showScreen("edit");
-  }
-
-  function renderWordRows() {
-    const wrap = document.getElementById("word-rows");
-    wrap.innerHTML = "";
-    state.editingWords.forEach((w) => {
-      const row = document.createElement("div");
-      row.className = "word-row";
-      row.innerHTML = `
-        <input type="text" class="word-field" placeholder="word" value="${escapeAttr(w.text)}" spellcheck="false" autocomplete="off" autocorrect="off">
-        <input type="text" class="def-field" placeholder="definition (optional)" value="${escapeAttr(w.definition)}" spellcheck="false" autocomplete="off" autocorrect="off">
-        <button class="row-delete" title="Remove">✕</button>
-      `;
-      const wordInput = row.querySelector(".word-field");
-      const defInput = row.querySelector(".def-field");
-      wordInput.addEventListener("input", () => { w.text = wordInput.value; });
-      defInput.addEventListener("input", () => { w.definition = defInput.value; });
-      row.querySelector(".row-delete").addEventListener("click", () => {
-        state.editingWords = state.editingWords.filter((x) => x.id !== w.id);
-        renderWordRows();
-      });
-      wrap.appendChild(row);
-    });
-  }
-
-  function escapeAttr(str) {
-    return (str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-  }
-
-  document.getElementById("btn-add-row").addEventListener("click", () => {
-    state.editingWords.push(freshWord("", ""));
-    renderWordRows();
-    const rows = document.querySelectorAll("#word-rows .word-field");
-    if (rows.length) rows[rows.length - 1].focus();
-  });
-
-  document.getElementById("btn-import-paste").addEventListener("click", () => {
-    const box = document.getElementById("paste-input");
-    const lines = box.value.split("\n").map((l) => l.trim()).filter(Boolean);
-    if (!lines.length) { toast("Paste some words first"); return; }
-    lines.forEach((line) => {
-      const commaIdx = line.indexOf(",");
-      let word, def;
-      if (commaIdx === -1) { word = line; def = ""; }
-      else { word = line.slice(0, commaIdx); def = line.slice(commaIdx + 1); }
-      if (word.trim()) state.editingWords.push(freshWord(word, def));
-    });
-    box.value = "";
-    renderWordRows();
-    toast(`Added ${lines.length} word${lines.length === 1 ? "" : "s"}`);
-  });
-
-  document.getElementById("btn-save-week").addEventListener("click", () => {
-    const cleaned = state.editingWords.filter((w) => w.text.trim().length > 0);
-    state.week.words = cleaned;
-    saveWeek(state.profile.id, state.week);
-    toast("Saved!");
-    renderHome();
-    showScreen("home");
-  });
-
-  document.getElementById("btn-new-week").addEventListener("click", () => {
-    if (state.week.words.length > 0) {
-      const ok = confirm("Archive this week's list and start a fresh one? Past progress is saved in Progress > Past Weeks.");
-      if (!ok) return;
-      const archived = Object.assign({}, state.week, { endedAt: Date.now() });
-      const hist = getHistory(state.profile.id);
-      hist.unshift(archived);
-      saveHistory(state.profile.id, hist);
-      if (firestoreReady()) Sync.pushHistoryEntry(state.profile.id, archived);
-    }
-    state.week = freshWeek();
-    saveWeek(state.profile.id, state.week);
-    state.editingWords = [];
-    renderWordRows();
-    renderHome();
-    toast("New week started!");
-  });
-
-  /* ---------------------------------------------------------------------
    * FLASHCARD (Look & Say) SESSION
    * ------------------------------------------------------------------- */
   let flash = { order: [], index: 0 };
 
   function openFlashcard() {
-    flash.order = state.week.words.slice();
+    flash.order = state.progress.words.slice();
     flash.index = 0;
     document.getElementById("flash-shuffle").checked = false;
     renderFlashcard();
@@ -452,7 +627,7 @@
   }
 
   document.getElementById("flash-shuffle").addEventListener("change", (e) => {
-    flash.order = e.target.checked ? shuffle(state.week.words) : state.week.words.slice();
+    flash.order = e.target.checked ? shuffle(state.progress.words) : state.progress.words.slice();
     flash.index = 0;
     renderFlashcard();
   });
@@ -473,7 +648,7 @@
   let spell = { queue: [], retry: [], index: 0, round: 1, streak: 0 };
 
   function openSpelling() {
-    spell = { queue: shuffle(state.week.words), retry: [], index: 0, round: 1, streak: 0 };
+    spell = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0 };
     document.getElementById("spell-streak").classList.add("hidden");
     renderSpelling();
     showScreen("spelling");
@@ -522,7 +697,7 @@
     document.getElementById("spell-input").disabled = true;
     document.getElementById("spell-submit").classList.add("hidden");
     document.getElementById("spell-continue").classList.remove("hidden");
-    saveWeek(state.profile.id, state.week);
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
   });
 
   document.getElementById("spell-input").addEventListener("keydown", (e) => {
@@ -552,7 +727,7 @@
   });
 
   document.getElementById("spell-exit").addEventListener("click", () => {
-    saveWeek(state.profile.id, state.week);
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
     renderHome();
     showScreen("home");
   });
@@ -563,7 +738,7 @@
   let vocab = { queue: [], retry: [], index: 0, round: 1, streak: 0 };
 
   function openVocab() {
-    vocab = { queue: shuffle(state.week.words), retry: [], index: 0, round: 1, streak: 0 };
+    vocab = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0 };
     document.getElementById("vocab-streak").classList.add("hidden");
     renderVocab();
     showScreen("vocab");
@@ -593,7 +768,7 @@
     if (knewIt) { w.vocab.known++; vocab.streak++; addStars(1); }
     else { vocab.streak = 0; if (vocab.round === 1) vocab.retry.push(w); }
     updateStreakBadge(document.getElementById("vocab-streak"), vocab.streak);
-    saveWeek(state.profile.id, state.week);
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
 
     vocab.index++;
     if (vocab.index >= vocab.queue.length) {
@@ -616,7 +791,7 @@
   document.getElementById("vocab-knew-it").addEventListener("click", () => gradeVocab(true));
   document.getElementById("vocab-missed").addEventListener("click", () => gradeVocab(false));
   document.getElementById("vocab-exit").addEventListener("click", () => {
-    saveWeek(state.profile.id, state.week);
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
     renderHome();
     showScreen("home");
   });
@@ -628,9 +803,9 @@
 
   document.querySelectorAll(".menu-card[data-test-kind]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      if (state.week.words.length === 0) { toast("Add some words first!"); showScreen("edit"); return; }
+      if (!state.progress || state.progress.words.length === 0) { toast("Add some words first!"); openCatalogEditor(); return; }
       test.kind = btn.getAttribute("data-test-kind");
-      test.queue = shuffle(state.week.words);
+      test.queue = shuffle(state.progress.words);
       test.index = 0;
       test.results = [];
       renderTest();
@@ -682,7 +857,7 @@
       addStars(1);
     }
     test.results.push(record);
-    saveWeek(state.profile.id, state.week);
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
 
     test.index++;
     if (test.index >= test.queue.length) {
@@ -710,7 +885,7 @@
     nextTestWord({ kind: "vocab", word: w.text, correct: false });
   });
   document.getElementById("test-exit").addEventListener("click", () => {
-    saveWeek(state.profile.id, state.week);
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
     renderHome();
     showScreen("home");
   });
@@ -757,10 +932,10 @@
 
   document.querySelectorAll(".menu-card[data-speed-kind]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      if (state.week.words.length === 0) { toast("Add some words first!"); showScreen("edit"); return; }
+      if (!state.progress || state.progress.words.length === 0) { toast("Add some words first!"); openCatalogEditor(); return; }
       speed = {
         kind: btn.getAttribute("data-speed-kind"),
-        queue: shuffle(state.week.words),
+        queue: shuffle(state.progress.words),
         index: 0,
         results: [],
         streak: 0,
@@ -797,7 +972,7 @@
     if (correct) { speed.streak++; addStars(1); } else { speed.streak = 0; }
     updateStreakBadge(document.getElementById("speed-streak"), speed.streak);
     speed.results.push({ kind: speed.kind, word: w.text, correct });
-    saveWeek(state.profile.id, state.week);
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
 
     speed.index++;
     if (speed.index >= speed.queue.length) {
@@ -824,7 +999,7 @@
   document.getElementById("speed-got-it").addEventListener("click", () => resolveSpeedSwipe("right"));
   document.getElementById("speed-missed").addEventListener("click", () => resolveSpeedSwipe("left"));
   document.getElementById("speed-exit").addEventListener("click", () => {
-    saveWeek(state.profile.id, state.week);
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
     renderHome();
     showScreen("home");
   });
@@ -877,37 +1052,55 @@
     return { icon: "⚪", label: "Not practiced yet", cls: "status-new" };
   }
 
-  function openProgress() {
+  async function openProgress() {
     const cur = document.getElementById("progress-current");
     cur.innerHTML = "";
-    state.week.words.forEach((w) => {
-      const meta = statusMeta(wordStatus(w));
-      const row = document.createElement("div");
-      row.className = "result-row " + meta.cls;
-      row.innerHTML = `<span>${meta.icon} ${escapeAttr(w.text)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${meta.label}</span>`;
-      cur.appendChild(row);
-    });
-    if (state.week.words.length === 0) {
+    if (state.progress && state.progress.words.length) {
+      state.progress.words.forEach((w) => {
+        const meta = statusMeta(wordStatus(w));
+        const row = document.createElement("div");
+        row.className = "result-row " + meta.cls;
+        row.innerHTML = `<span>${meta.icon} ${escapeAttr(w.text)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${meta.label}</span>`;
+        cur.appendChild(row);
+      });
+    } else {
       cur.innerHTML = '<p class="hint">No words yet this week.</p>';
     }
 
-    const hist = getHistory(state.profile.id);
     const histWrap = document.getElementById("progress-history");
-    histWrap.innerHTML = "";
-    if (hist.length === 0) {
-      histWrap.innerHTML = '<p class="hint">No past weeks yet.</p>';
-    } else {
-      hist.forEach((wk) => {
-        let correct = 0, attempts = 0;
-        wk.words.forEach((w) => { correct += w.spelling.correct + w.vocab.known; attempts += w.spelling.attempts + w.vocab.attempts; });
-        const pct = attempts ? Math.round((correct / attempts) * 100) : 0;
-        const div = document.createElement("div");
-        div.className = "history-week";
-        div.innerHTML = `<div class="hw-title">${escapeAttr(wk.label)}</div><div class="hw-meta">${wk.words.length} words · ${attempts ? pct + "% accuracy" : "not practiced"}</div>`;
-        histWrap.appendChild(div);
-      });
-    }
+    histWrap.innerHTML = '<p class="hint">Loading…</p>';
     showScreen("progress");
+
+    let others = [];
+    if (firestoreReady()) {
+      try { others = await Sync.fetchAllProgress(state.profile.id); } catch (e) { /* ignore */ }
+    }
+    if (!others.length) {
+      const idx = load(progressIndexKey(state.profile.id), []);
+      others = idx.map((wid) => load(progressKey(state.profile.id, wid), null)).filter(Boolean);
+    }
+    if (state.progress) others = others.filter((o) => o.weekId !== state.progress.weekId);
+
+    histWrap.innerHTML = "";
+    if (!others.length) {
+      histWrap.innerHTML = '<p class="hint">No other weeks practiced yet.</p>';
+      return;
+    }
+    others.sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+    others.forEach((o) => {
+      let correct = 0, attempts = 0;
+      (o.words || []).forEach((w) => { correct += w.spelling.correct + w.vocab.known; attempts += w.spelling.attempts + w.vocab.attempts; });
+      const pct = attempts ? Math.round((correct / attempts) * 100) : 0;
+      const btn = document.createElement("button");
+      btn.className = "history-week result-row clickable";
+      btn.innerHTML = `<div><div class="hw-title">${escapeAttr(o.label || o.weekId)}</div><div class="hw-meta">${(o.words || []).length} words · ${attempts ? pct + "% accuracy" : "not practiced"}</div></div>`;
+      btn.addEventListener("click", () => {
+        const wk = state.catalogWeeks.find((w) => w.id === o.weekId);
+        if (wk) selectWeek(wk, true);
+        else toast("That week isn't in the catalog anymore");
+      });
+      histWrap.appendChild(btn);
+    });
   }
   document.getElementById("progress-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
 

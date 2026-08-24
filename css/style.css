@@ -169,6 +169,31 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
   width: auto;
   white-space: nowrap;
 }
+.new-profile-form .grade-field {
+  flex: 0 0 90px;
+  min-width: 0;
+}
+.change-week-btn {
+  max-width: 280px;
+  margin: 0 auto 20px;
+}
+.week-picker-group-title {
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 18px 0 8px;
+}
+.result-row.clickable {
+  cursor: pointer;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  font-size: inherit;
+}
+.result-row.clickable:active { transform: scale(0.98); }
 
 /* INPUTS */
 input[type="text"], textarea {
