@@ -602,6 +602,7 @@
       else if (target === "vocab") openVocab(false);
       else if (target === "test-setup") showScreen("test-setup");
       else if (target === "speed-setup") showScreen("speed-setup");
+      else if (target === "scramble") openScramble();
       else if (target === "progress") openProgress();
     });
   });
@@ -1042,6 +1043,166 @@
     card.addEventListener("pointerup", endDrag);
     card.addEventListener("pointercancel", endDrag);
   })();
+
+  /* ---------------------------------------------------------------------
+   * WORD SCRAMBLE (drag letter tiles into the right order)
+   * ------------------------------------------------------------------- */
+  let scramble = { queue: [], retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false };
+
+  function openScramble() {
+    scramble = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false };
+    document.getElementById("scramble-streak").classList.add("hidden");
+    renderScrambleWord();
+    showScreen("scramble");
+  }
+
+  function shuffleLetters(word) {
+    const chars = word.split("").map((c, i) => ({ id: `t${i}`, char: c }));
+    if (chars.length <= 1) return chars;
+    let attempt = chars;
+    for (let tries = 0; tries < 8; tries++) {
+      attempt = shuffle(chars);
+      if (attempt.map((t) => t.char).join("") !== word) break;
+    }
+    return attempt;
+  }
+
+  function renderScrambleWord() {
+    const w = scramble.queue[scramble.index];
+    document.getElementById("scramble-progress").textContent = `Word ${scramble.index + 1} of ${scramble.queue.length}${scramble.round === 2 ? " (retry)" : ""}`;
+    scramble.bank = shuffleLetters(w.text.trim());
+    scramble.answer = new Array(scramble.bank.length).fill(null);
+    scramble.locked = false;
+    document.getElementById("scramble-feedback").classList.add("hidden");
+    document.getElementById("scramble-continue").classList.add("hidden");
+    renderScrambleTiles();
+    speak(w.text);
+  }
+
+  function renderScrambleTiles() {
+    const bankRow = document.getElementById("scramble-bank-row");
+    const answerRow = document.getElementById("scramble-answer-row");
+    bankRow.innerHTML = "";
+    answerRow.innerHTML = "";
+
+    scramble.answer.forEach((tileId, i) => {
+      const slot = document.createElement("div");
+      if (tileId) {
+        const tile = scramble.bank.find((t) => t.id === tileId);
+        slot.className = "scramble-tile filled";
+        slot.textContent = tile.char.toUpperCase();
+        slot.addEventListener("click", () => removeFromAnswer(i));
+      } else {
+        slot.className = "scramble-tile empty-slot";
+      }
+      answerRow.appendChild(slot);
+    });
+
+    scramble.bank.forEach((tile) => {
+      if (scramble.answer.includes(tile.id)) return;
+      const el = document.createElement("button");
+      el.className = "scramble-tile bank-tile";
+      el.textContent = tile.char.toUpperCase();
+      attachTileDrag(el, tile.id);
+      bankRow.appendChild(el);
+    });
+  }
+
+  function placeInAnswer(tileId) {
+    if (scramble.locked) return;
+    const idx = scramble.answer.indexOf(null);
+    if (idx === -1) return;
+    scramble.answer[idx] = tileId;
+    renderScrambleTiles();
+    if (!scramble.answer.includes(null)) checkScrambleAnswer();
+  }
+
+  function removeFromAnswer(slotIndex) {
+    if (scramble.locked) return;
+    scramble.answer[slotIndex] = null;
+    renderScrambleTiles();
+  }
+
+  // A tap and a drag both end in the same place: release the tile and it
+  // drops into the next empty answer slot. The visual drag exists purely
+  // for the tactile "move the letter with your finger" feel — there's no
+  // pixel-precise drop-zone check, which keeps it forgiving for small
+  // fingers and imprecise drops.
+  function attachTileDrag(el, tileId) {
+    let dragging = false, startX = 0, startY = 0, pointerId = null;
+    el.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      pointerId = e.pointerId;
+      el.setPointerCapture(pointerId);
+      el.classList.add("dragging");
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+    });
+    function endDrag() {
+      if (!dragging) return;
+      dragging = false;
+      placeInAnswer(tileId);
+    }
+    el.addEventListener("pointerup", endDrag);
+    el.addEventListener("pointercancel", endDrag);
+  }
+
+  function checkScrambleAnswer() {
+    scramble.locked = true;
+    const w = scramble.queue[scramble.index];
+    const assembled = scramble.answer.map((tileId) => scramble.bank.find((t) => t.id === tileId).char).join("");
+    const correct = assembled.toLowerCase() === w.text.trim().toLowerCase();
+    w.spelling.attempts++;
+    const feedback = document.getElementById("scramble-feedback");
+    if (correct) {
+      w.spelling.correct++;
+      scramble.streak++;
+      addStars(1);
+      feedback.className = "feedback correct";
+      feedback.textContent = "✅ Correct! Nice work.";
+    } else {
+      scramble.streak = 0;
+      if (scramble.round === 1) scramble.retry.push(w);
+      feedback.className = "feedback incorrect";
+      feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(w.text)}</span>`;
+    }
+    updateStreakBadge(document.getElementById("scramble-streak"), scramble.streak);
+    feedback.classList.remove("hidden");
+    document.getElementById("scramble-continue").classList.remove("hidden");
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
+  }
+
+  document.getElementById("scramble-hear").addEventListener("click", () => speak(scramble.queue[scramble.index].text));
+  document.getElementById("scramble-continue").addEventListener("click", () => {
+    scramble.index++;
+    if (scramble.index >= scramble.queue.length) {
+      if (scramble.round === 1 && scramble.retry.length > 0) {
+        scramble.queue = shuffle(scramble.retry);
+        scramble.retry = [];
+        scramble.index = 0;
+        scramble.round = 2;
+        toast("Let's try those tricky ones again!");
+        renderScrambleWord();
+      } else {
+        toast("Word Scramble complete! ⭐");
+        renderHome();
+        showScreen("home");
+      }
+    } else {
+      renderScrambleWord();
+    }
+  });
+  document.getElementById("scramble-exit").addEventListener("click", () => {
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
+    renderHome();
+    showScreen("home");
+  });
 
   /* ---------------------------------------------------------------------
    * PROGRESS SCREEN

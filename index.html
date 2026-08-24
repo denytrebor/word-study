@@ -112,6 +112,10 @@
           <span class="menu-icon">⚡</span>
           <span>Speed Quiz</span>
         </button>
+        <button class="menu-card" data-nav="scramble">
+          <span class="menu-icon">🔤</span>
+          <span>Word Scramble</span>
+        </button>
         <button class="menu-card" data-nav="progress">
           <span class="menu-icon">📊</span>
           <span>Progress</span>
@@ -182,6 +186,26 @@
         </div>
       </div>
       <button id="vocab-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
+    <!-- SCREEN: Word Scramble -->
+    <section id="screen-scramble" class="screen">
+      <div class="session-topbar">
+        <span id="scramble-progress">Word 1 of 1</span>
+        <span id="scramble-streak" class="streak-badge hidden">🔥 0</span>
+      </div>
+
+      <div class="practice-card">
+        <p class="practice-instruction">Drag the letters into the right order.</p>
+        <button id="scramble-hear" class="btn btn-round">🔊 Hear It</button>
+
+        <div id="scramble-answer-row" class="scramble-row scramble-answer-row"></div>
+        <div id="scramble-bank-row" class="scramble-row scramble-bank-row"></div>
+
+        <div id="scramble-feedback" class="feedback hidden"></div>
+        <button id="scramble-continue" class="btn btn-secondary hidden">Continue →</button>
+      </div>
+      <button id="scramble-exit" class="btn btn-ghost">Exit</button>
     </section>
 
     <!-- SCREEN: Test setup -->
