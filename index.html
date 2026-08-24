@@ -65,6 +65,10 @@
           <span class="menu-icon">🎯</span>
           <span>Test Mode</span>
         </button>
+        <button class="menu-card" data-nav="speed-setup">
+          <span class="menu-icon">⚡</span>
+          <span>Speed Quiz</span>
+        </button>
         <button class="menu-card" data-nav="progress">
           <span class="menu-icon">📊</span>
           <span>Progress</span>
@@ -203,9 +207,54 @@
       <button id="test-exit" class="btn btn-ghost">Exit</button>
     </section>
 
-    <!-- SCREEN: Test results -->
+    <!-- SCREEN: Speed Quiz setup -->
+    <section id="screen-speed-setup" class="screen">
+      <h2>⚡ Speed Quiz</h2>
+      <p class="hint">A grown-up reads each word out loud (or lets the app say it) and swipes right if they got it, left if they didn't. See what needs practice at the end.</p>
+      <div class="menu-grid">
+        <button class="menu-card" data-speed-kind="spelling">
+          <span class="menu-icon">✏️</span>
+          <span>Spelling</span>
+        </button>
+        <button class="menu-card" data-speed-kind="vocab">
+          <span class="menu-icon">💡</span>
+          <span>Vocab</span>
+        </button>
+      </div>
+      <label class="shuffle-toggle" style="justify-content:center;margin-top:18px;">
+        <input type="checkbox" id="speed-audio-toggle" checked>
+        🔊 Read each word aloud automatically
+      </label>
+      <button id="speed-setup-exit" class="btn btn-ghost">Cancel</button>
+    </section>
+
+    <!-- SCREEN: Speed Quiz running -->
+    <section id="screen-speed" class="screen">
+      <div class="session-topbar">
+        <span id="speed-progress">Word 1 of 1</span>
+        <span id="speed-streak" class="streak-badge hidden">🔥 0</span>
+      </div>
+
+      <div class="speed-card-wrap">
+        <div class="speed-overlay speed-overlay-right" id="speed-overlay-right">✅</div>
+        <div class="speed-overlay speed-overlay-left" id="speed-overlay-left">❌</div>
+        <div class="flashcard speed-card" id="speed-card">
+          <div class="flashcard-word" id="speed-word">word</div>
+        </div>
+      </div>
+
+      <button id="speed-hear" class="btn btn-round">🔊 Hear It</button>
+
+      <div class="speed-buttons">
+        <button id="speed-missed" class="btn btn-danger">❌ Missed It</button>
+        <button id="speed-got-it" class="btn btn-success">✅ Got It</button>
+      </div>
+      <button id="speed-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
+    <!-- SCREEN: Test results (shared by Test Mode and Speed Quiz) -->
     <section id="screen-test-results" class="screen">
-      <h2>Test Results</h2>
+      <h2 id="test-results-title">Test Results</h2>
       <div class="score-circle" id="test-score-circle">0%</div>
       <p id="test-score-text" class="hint"></p>
       <div id="test-results-list" class="results-list"></div>

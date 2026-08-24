@@ -262,6 +262,7 @@
       else if (target === "spelling") openSpelling(false);
       else if (target === "vocab") openVocab(false);
       else if (target === "test-setup") showScreen("test-setup");
+      else if (target === "speed-setup") showScreen("speed-setup");
       else if (target === "progress") openProgress();
     });
   });
@@ -635,19 +636,28 @@
   });
 
   function showTestResults() {
-    const total = test.results.length;
-    const right = test.results.filter((r) => r.correct).length;
+    renderResultsScreen({
+      title: "Test Results",
+      kindLabel: (test.kind === "spelling" ? "Spelling" : "Vocab") + " Test",
+      results: test.results,
+    });
+  }
+
+  function renderResultsScreen({ title, kindLabel, results }) {
+    const total = results.length;
+    const right = results.filter((r) => r.correct).length;
     const pct = total ? Math.round((right / total) * 100) : 0;
+    document.getElementById("test-results-title").textContent = title;
     document.getElementById("test-score-circle").textContent = pct + "%";
-    document.getElementById("test-score-text").textContent = `${right} of ${total} correct — ${test.kind === "spelling" ? "Spelling" : "Vocab"} Test`;
+    document.getElementById("test-score-text").textContent = `${right} of ${total} correct — ${kindLabel}`;
 
     const list = document.getElementById("test-results-list");
     list.innerHTML = "";
-    test.results.forEach((r) => {
+    results.forEach((r) => {
       const row = document.createElement("div");
       row.className = "result-row";
       const icon = r.correct ? "✅" : "❌";
-      const extra = !r.correct && r.kind === "spelling" ? ` <span style="opacity:.6">(you wrote: ${escapeAttr(r.given || "—")})</span>` : "";
+      const extra = !r.correct && r.given ? ` <span style="opacity:.6">(you wrote: ${escapeAttr(r.given)})</span>` : "";
       row.innerHTML = `<span>${icon} ${escapeAttr(r.word)}${extra}</span>`;
       list.appendChild(row);
     });
@@ -659,6 +669,124 @@
     showScreen("test-results");
   }
   document.getElementById("test-results-done").addEventListener("click", () => { renderHome(); showScreen("home"); });
+
+  /* ---------------------------------------------------------------------
+   * SPEED QUIZ (parent-led, swipe right = got it / swipe left = missed it)
+   * ------------------------------------------------------------------- */
+  let speed = { kind: "spelling", queue: [], index: 0, results: [], streak: 0, autoSpeak: true };
+
+  document.querySelectorAll(".menu-card[data-speed-kind]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (state.week.words.length === 0) { toast("Add some words first!"); showScreen("edit"); return; }
+      speed = {
+        kind: btn.getAttribute("data-speed-kind"),
+        queue: shuffle(state.week.words),
+        index: 0,
+        results: [],
+        streak: 0,
+        autoSpeak: document.getElementById("speed-audio-toggle").checked,
+      };
+      document.getElementById("speed-streak").classList.add("hidden");
+      renderSpeedCard();
+      showScreen("speed");
+    });
+  });
+  document.getElementById("speed-setup-exit").addEventListener("click", () => showScreen("home"));
+
+  function renderSpeedCard() {
+    const w = speed.queue[speed.index];
+    const card = document.getElementById("speed-card");
+    card.classList.remove("dragging");
+    card.style.transition = "none";
+    card.style.transform = "";
+    card.style.opacity = 1;
+    requestAnimationFrame(() => { card.style.transition = ""; });
+    document.getElementById("speed-overlay-right").style.opacity = 0;
+    document.getElementById("speed-overlay-left").style.opacity = 0;
+    document.getElementById("speed-progress").textContent = `Word ${speed.index + 1} of ${speed.queue.length}`;
+    document.getElementById("speed-word").textContent = w.text;
+    if (speed.autoSpeak) speak(w.text);
+  }
+
+  document.getElementById("speed-hear").addEventListener("click", () => speak(speed.queue[speed.index].text));
+
+  function commitSpeedAnswer(correct) {
+    const w = speed.queue[speed.index];
+    if (speed.kind === "spelling") { w.spelling.attempts++; if (correct) w.spelling.correct++; }
+    else { w.vocab.attempts++; if (correct) w.vocab.known++; }
+    if (correct) { speed.streak++; addStars(1); } else { speed.streak = 0; }
+    updateStreakBadge(document.getElementById("speed-streak"), speed.streak);
+    speed.results.push({ kind: speed.kind, word: w.text, correct });
+    saveWeek(state.profile.id, state.week);
+
+    speed.index++;
+    if (speed.index >= speed.queue.length) {
+      renderResultsScreen({
+        title: "Speed Quiz Results",
+        kindLabel: (speed.kind === "spelling" ? "Spelling" : "Vocab") + " Speed Quiz",
+        results: speed.results,
+      });
+    } else {
+      renderSpeedCard();
+    }
+  }
+
+  function resolveSpeedSwipe(direction) {
+    const card = document.getElementById("speed-card");
+    card.classList.remove("dragging");
+    const flyX = direction === "right" ? 700 : -700;
+    card.style.transition = "transform 0.25s ease, opacity 0.25s ease";
+    card.style.transform = `translateX(${flyX}px) rotate(${flyX / 20}deg)`;
+    card.style.opacity = 0;
+    setTimeout(() => commitSpeedAnswer(direction === "right"), 220);
+  }
+
+  document.getElementById("speed-got-it").addEventListener("click", () => resolveSpeedSwipe("right"));
+  document.getElementById("speed-missed").addEventListener("click", () => resolveSpeedSwipe("left"));
+  document.getElementById("speed-exit").addEventListener("click", () => {
+    saveWeek(state.profile.id, state.week);
+    renderHome();
+    showScreen("home");
+  });
+
+  (function setupSpeedDrag() {
+    const card = document.getElementById("speed-card");
+    const overlayRight = document.getElementById("speed-overlay-right");
+    const overlayLeft = document.getElementById("speed-overlay-left");
+    const threshold = 90;
+    let dragging = false, startX = 0, deltaX = 0, pointerId = null;
+
+    card.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      startX = e.clientX;
+      deltaX = 0;
+      pointerId = e.pointerId;
+      card.setPointerCapture(pointerId);
+      card.classList.add("dragging");
+    });
+    card.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      deltaX = e.clientX - startX;
+      card.style.transform = `translateX(${deltaX}px) rotate(${deltaX / 20}deg)`;
+      const strength = Math.min(Math.abs(deltaX) / threshold, 1);
+      overlayRight.style.opacity = deltaX > 0 ? strength : 0;
+      overlayLeft.style.opacity = deltaX < 0 ? strength : 0;
+    });
+    function endDrag() {
+      if (!dragging) return;
+      dragging = false;
+      if (deltaX > threshold) resolveSpeedSwipe("right");
+      else if (deltaX < -threshold) resolveSpeedSwipe("left");
+      else {
+        card.classList.remove("dragging");
+        card.style.transform = "";
+        overlayRight.style.opacity = 0;
+        overlayLeft.style.opacity = 0;
+      }
+    }
+    card.addEventListener("pointerup", endDrag);
+    card.addEventListener("pointercancel", endDrag);
+  })();
 
   /* ---------------------------------------------------------------------
    * PROGRESS SCREEN

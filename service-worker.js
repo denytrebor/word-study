@@ -1,4 +1,4 @@
-const CACHE_NAME = "word-study-v1";
+const CACHE_NAME = "word-study-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -24,17 +24,17 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Network-first: always try to fetch the latest version when online, so app
+// updates show up on the next load instead of waiting an extra reload cycle.
+// Falls back to the cache when offline.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
-        .then((response) => {
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
-          return response;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(event.request)
+      .then((response) => {
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

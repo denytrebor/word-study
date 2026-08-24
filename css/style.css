@@ -293,6 +293,34 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   font-size: 1.1rem;
 }
 
+/* SPEED QUIZ */
+.speed-card-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.speed-card {
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+  width: 100%;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+.speed-card.dragging { transition: none; cursor: grabbing; }
+.speed-overlay {
+  position: absolute;
+  top: 16px;
+  font-size: 2.2rem;
+  opacity: 0;
+  z-index: 2;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15));
+}
+.speed-overlay-right { right: 20px; }
+.speed-overlay-left { left: 20px; }
+.speed-buttons { display: flex; gap: 12px; margin-top: 8px; }
+.speed-buttons .btn { font-size: 1.15rem; padding: 20px; }
+
 /* TEST RESULTS */
 .score-circle {
   width: 140px;
