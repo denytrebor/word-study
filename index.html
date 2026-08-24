@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Word Study</title>
+<meta name="theme-color" content="#4338ca">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Word Study">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- HEADER (hidden on profile screen) -->
+  <header id="app-header" class="hidden">
+    <button id="btn-home" class="icon-btn" title="Home">🏠</button>
+    <div class="header-info">
+      <span id="header-profile-name">—</span>
+      <span id="header-stars">⭐ 0</span>
+    </div>
+    <button id="btn-switch-profile" class="icon-btn" title="Switch profile">🔀</button>
+  </header>
+
+  <main id="app-main">
+
+    <!-- SCREEN: Profiles -->
+    <section id="screen-profiles" class="screen active">
+      <h1 class="app-title">📚 Word Study</h1>
+      <p class="subtitle">Who's studying today?</p>
+      <div id="profile-list" class="profile-grid"></div>
+      <div class="new-profile-form">
+        <input type="text" id="new-profile-name" placeholder="Add a new student's name" spellcheck="false" autocomplete="off" autocorrect="off">
+        <button id="btn-add-profile" class="btn btn-primary">+ Add Student</button>
+      </div>
+    </section>
+
+    <!-- SCREEN: Home menu -->
+    <section id="screen-home" class="screen">
+      <h2 class="week-label" id="home-week-label">This Week's Words</h2>
+      <p class="word-count" id="home-word-count">0 words</p>
+
+      <div class="menu-grid">
+        <button class="menu-card" data-nav="edit">
+          <span class="menu-icon">📝</span>
+          <span>Edit This Week's List</span>
+        </button>
+        <button class="menu-card" data-nav="flashcard">
+          <span class="menu-icon">🔊</span>
+          <span>Look &amp; Say</span>
+        </button>
+        <button class="menu-card" data-nav="spelling">
+          <span class="menu-icon">✏️</span>
+          <span>Spelling Practice</span>
+        </button>
+        <button class="menu-card" data-nav="vocab">
+          <span class="menu-icon">💡</span>
+          <span>Vocab Practice</span>
+        </button>
+        <button class="menu-card" data-nav="test-setup">
+          <span class="menu-icon">🎯</span>
+          <span>Test Mode</span>
+        </button>
+        <button class="menu-card" data-nav="progress">
+          <span class="menu-icon">📊</span>
+          <span>Progress</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- SCREEN: Edit word list -->
+    <section id="screen-edit" class="screen">
+      <h2>Edit This Week's List</h2>
+      <p class="hint">Add words one at a time, or paste a whole list below (one word per line — add a comma and the definition if you want vocab practice too. Example: <em>necessary, absolutely required</em>).</p>
+
+      <div class="paste-box">
+        <textarea id="paste-input" rows="4" placeholder="necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+        <button id="btn-import-paste" class="btn btn-secondary">Add These Words</button>
+      </div>
+
+      <div id="word-rows" class="word-rows"></div>
+      <button id="btn-add-row" class="btn btn-ghost">+ Add One Word</button>
+
+      <div class="edit-actions">
+        <button id="btn-save-week" class="btn btn-primary">Save List</button>
+        <button id="btn-new-week" class="btn btn-warning">Start New Week (Archive This List)</button>
+      </div>
+    </section>
+
+    <!-- SCREEN: Flashcard (Look & Say) -->
+    <section id="screen-flashcard" class="screen">
+      <div class="session-topbar">
+        <span id="flash-progress">Card 1 of 1</span>
+        <label class="shuffle-toggle"><input type="checkbox" id="flash-shuffle"> Shuffle</label>
+      </div>
+      <div class="flashcard">
+        <div class="flashcard-word" id="flash-word">word</div>
+        <button id="flash-hear" class="btn btn-round">🔊 Hear It</button>
+      </div>
+      <div class="session-nav">
+        <button id="flash-prev" class="btn btn-secondary">← Prev</button>
+        <button id="flash-next" class="btn btn-primary">Next →</button>
+      </div>
+      <button id="flash-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
+    <!-- SCREEN: Spelling Practice -->
+    <section id="screen-spelling" class="screen">
+      <div class="session-topbar">
+        <span id="spell-progress">Word 1 of 1</span>
+        <span id="spell-streak" class="streak-badge hidden">🔥 0</span>
+      </div>
+
+      <div class="practice-card">
+        <p class="practice-instruction">Listen, then spell the word.</p>
+        <button id="spell-hear" class="btn btn-round">🔊 Hear It Again</button>
+
+        <div class="answer-row">
+          <input type="text" id="spell-input" placeholder="Type the word here" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
+          <button id="spell-mic" class="icon-btn mic-btn hidden" title="Speak your answer">🎤</button>
+        </div>
+
+        <button id="spell-submit" class="btn btn-primary">Check</button>
+
+        <div id="spell-feedback" class="feedback hidden"></div>
+        <button id="spell-continue" class="btn btn-secondary hidden">Continue →</button>
+      </div>
+      <button id="spell-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
+    <!-- SCREEN: Vocab Practice -->
+    <section id="screen-vocab" class="screen">
+      <div class="session-topbar">
+        <span id="vocab-progress">Word 1 of 1</span>
+        <span id="vocab-streak" class="streak-badge hidden">🔥 0</span>
+      </div>
+
+      <div class="practice-card">
+        <p class="practice-instruction">What does this word mean? Say it or think it through, then reveal.</p>
+        <div class="flashcard-word" id="vocab-word">word</div>
+        <button id="vocab-hear" class="btn btn-round">🔊 Hear It</button>
+
+        <button id="vocab-reveal" class="btn btn-primary">Show Definition</button>
+        <div id="vocab-definition" class="definition-box hidden"></div>
+
+        <div id="vocab-selfgrade" class="selfgrade-row hidden">
+          <button id="vocab-knew-it" class="btn btn-success">✅ I Knew It</button>
+          <button id="vocab-missed" class="btn btn-danger">❌ Still Learning</button>
+        </div>
+      </div>
+      <button id="vocab-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
+    <!-- SCREEN: Test setup -->
+    <section id="screen-test-setup" class="screen">
+      <h2>Test Mode</h2>
+      <p class="hint">Runs through the list one time, just like a real test. No hints, and only two replays per word.</p>
+      <div class="menu-grid">
+        <button class="menu-card" data-test-kind="spelling">
+          <span class="menu-icon">✏️</span>
+          <span>Spelling Test</span>
+        </button>
+        <button class="menu-card" data-test-kind="vocab">
+          <span class="menu-icon">💡</span>
+          <span>Vocab Test</span>
+        </button>
+      </div>
+      <button id="test-setup-exit" class="btn btn-ghost">Cancel</button>
+    </section>
+
+    <!-- SCREEN: Test running (spelling) -->
+    <section id="screen-test" class="screen">
+      <div class="session-topbar">
+        <span id="test-progress">Word 1 of 1</span>
+        <span id="test-replays"></span>
+      </div>
+
+      <div class="practice-card">
+        <p class="practice-instruction" id="test-instruction">Listen, then spell the word.</p>
+        <button id="test-hear" class="btn btn-round">🔊 Hear It</button>
+
+        <div id="test-spelling-ui">
+          <div class="answer-row">
+            <input type="text" id="test-input" placeholder="Type the word here" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
+            <button id="test-mic" class="icon-btn mic-btn hidden" title="Speak your answer">🎤</button>
+          </div>
+        </div>
+
+        <div id="test-vocab-ui" class="hidden">
+          <div class="flashcard-word" id="test-vocab-word">word</div>
+          <div class="selfgrade-row">
+            <button id="test-vocab-knew" class="btn btn-success">✅ I Knew It</button>
+            <button id="test-vocab-missed" class="btn btn-danger">❌ Still Learning</button>
+          </div>
+        </div>
+
+        <button id="test-submit" class="btn btn-primary">Next →</button>
+      </div>
+      <button id="test-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
+    <!-- SCREEN: Test results -->
+    <section id="screen-test-results" class="screen">
+      <h2>Test Results</h2>
+      <div class="score-circle" id="test-score-circle">0%</div>
+      <p id="test-score-text" class="hint"></p>
+      <div id="test-results-list" class="results-list"></div>
+      <button id="test-results-done" class="btn btn-primary">Back to Menu</button>
+    </section>
+
+    <!-- SCREEN: Progress -->
+    <section id="screen-progress" class="screen">
+      <h2>Progress</h2>
+      <h3>This Week</h3>
+      <div id="progress-current" class="results-list"></div>
+      <h3>Past Weeks</h3>
+      <div id="progress-history" class="results-list"></div>
+      <button id="progress-exit" class="btn btn-primary">Back to Menu</button>
+    </section>
+
+  </main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
