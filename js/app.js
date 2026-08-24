@@ -112,8 +112,13 @@
       };
       recognizer.onresult = (e) => {
         const transcript = e.results[0][0].transcript || "";
-        inputEl.value = transcript.trim().replace(/[.,!?]+$/, "");
+        const clean = transcript.trim().replace(/[.,!?]+$/, "");
+        inputEl.value = clean;
+        // Safari/WebKit sometimes won't repaint a programmatic value change
+        // on an unfocused input until focus + selection are forced.
         inputEl.focus();
+        try { inputEl.setSelectionRange(clean.length, clean.length); } catch (err) { /* ignore */ }
+        inputEl.dispatchEvent(new Event("input", { bubbles: true }));
       };
       recognizer.onerror = () => { /* ignore, let them type instead */ };
       recognizer.onend = () => {
