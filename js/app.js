@@ -27,9 +27,22 @@
   function setActiveProfileId(id) { localStorage.setItem(ACTIVE_KEY, id); }
 
   function getWeek(profileId) { return load(weekKey(profileId), null); }
-  function saveWeek(profileId, week) { save(weekKey(profileId), week); }
+  function saveWeek(profileId, week) {
+    save(weekKey(profileId), week);
+    if (firestoreReady()) Sync.pushWeek(profileId, week);
+  }
   function getHistory(profileId) { return load(historyKey(profileId), []); }
   function saveHistory(profileId, hist) { save(historyKey(profileId), hist); }
+
+  function firestoreReady() {
+    return typeof Sync !== "undefined" && !!Sync.getHouseholdCode();
+  }
+
+  function updateLocalProfileStars(id, stars) {
+    const profiles = getProfiles();
+    const p = profiles.find((x) => x.id === id);
+    if (p) { p.stars = stars; saveProfiles(profiles); }
+  }
 
   function uid() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -149,7 +162,7 @@
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
     document.getElementById("screen-" + id).classList.add("active");
     const header = document.getElementById("app-header");
-    header.classList.toggle("hidden", id === "profiles");
+    header.classList.toggle("hidden", id === "profiles" || id === "household");
     window.scrollTo(0, 0);
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
@@ -167,6 +180,7 @@
     if (idx !== -1) profiles[idx] = state.profile;
     saveProfiles(profiles);
     refreshHeader();
+    if (firestoreReady()) Sync.pushProfile(state.profile);
   }
 
   /* ---------------------------------------------------------------------
@@ -195,15 +209,76 @@
       btn.addEventListener("click", () => selectProfile(p.id));
       wrap.appendChild(btn);
     });
+    const code = typeof Sync !== "undefined" ? Sync.getHouseholdCode() : null;
+    const info = document.getElementById("household-info");
+    info.classList.remove("hidden");
+    if (code) {
+      info.innerHTML = 'Household code: <strong id="household-code-display"></strong> <button id="btn-copy-household" class="btn btn-ghost household-copy-btn">Copy</button>';
+      document.getElementById("household-code-display").textContent = code;
+      document.getElementById("btn-copy-household").addEventListener("click", () => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(code).then(() => toast("Copied!")).catch(() => toast(code));
+        } else {
+          toast(code);
+        }
+      });
+    } else if (typeof Sync !== "undefined") {
+      info.innerHTML = '<button id="btn-open-household" class="btn btn-ghost household-copy-btn">🔗 Sync across devices</button>';
+      document.getElementById("btn-open-household").addEventListener("click", () => showScreen("household"));
+    } else {
+      info.classList.add("hidden");
+    }
   }
 
-  function selectProfile(id) {
+  function watchProfilesList() {
+    if (!firestoreReady()) return;
+    Sync.watchProfiles((remoteList) => {
+      saveProfiles(remoteList.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, stars: p.stars })));
+      renderProfiles();
+    });
+  }
+
+  function applyRemoteProfileUpdate(data) {
+    if (!state.profile) return;
+    if (typeof data.stars === "number" && data.stars !== state.profile.stars) {
+      state.profile.stars = data.stars;
+      updateLocalProfileStars(state.profile.id, data.stars);
+      refreshHeader();
+    }
+    const activeId = (document.querySelector(".screen.active") || {}).id;
+    const safeToApply = activeId === "screen-home" || activeId === "screen-progress";
+    // Only swap state.week in from a remote snapshot when nothing else could
+    // be actively mutating word objects by reference (a study session or the
+    // list editor) — otherwise a remote echo mid-session can silently
+    // orphan in-progress local edits.
+    if (safeToApply && data.currentWeek && JSON.stringify(data.currentWeek) !== JSON.stringify(state.week)) {
+      save(weekKey(state.profile.id), data.currentWeek);
+      state.week = data.currentWeek;
+      if (activeId === "screen-home") renderHome();
+      else openProgress();
+    }
+  }
+
+  async function selectProfile(id) {
     const profiles = getProfiles();
     const p = profiles.find((x) => x.id === id);
     if (!p) return;
     state.profile = p;
     setActiveProfileId(id);
+
     let week = getWeek(id);
+    // First time this profile is opened on this device: check Firestore
+    // before assuming there's no data, so we don't clobber a real word
+    // list that already exists on another device with a blank one.
+    if (!week && firestoreReady()) {
+      try {
+        const remote = await Sync.fetchProfile(id);
+        if (remote && remote.currentWeek) {
+          week = remote.currentWeek;
+          save(weekKey(id), week);
+        }
+      } catch (e) { /* fall through to local fresh week */ }
+    }
     if (!week) {
       week = freshWeek();
       saveWeek(id, week);
@@ -212,6 +287,7 @@
     refreshHeader();
     renderHome();
     showScreen("home");
+    if (firestoreReady()) Sync.watchProfile(id, applyRemoteProfileUpdate);
   }
 
   document.getElementById("btn-add-profile").addEventListener("click", () => {
@@ -224,6 +300,7 @@
     saveProfiles(profiles);
     input.value = "";
     renderProfiles();
+    if (firestoreReady()) Sync.pushProfile(p);
     selectProfile(p.id);
   });
   document.getElementById("new-profile-name").addEventListener("keydown", (e) => {
@@ -233,6 +310,7 @@
   document.getElementById("btn-switch-profile").addEventListener("click", () => {
     renderProfiles();
     showScreen("profiles");
+    watchProfilesList();
   });
   document.getElementById("btn-home").addEventListener("click", () => {
     renderHome();
@@ -339,9 +417,11 @@
     if (state.week.words.length > 0) {
       const ok = confirm("Archive this week's list and start a fresh one? Past progress is saved in Progress > Past Weeks.");
       if (!ok) return;
+      const archived = Object.assign({}, state.week, { endedAt: Date.now() });
       const hist = getHistory(state.profile.id);
-      hist.unshift(Object.assign({}, state.week, { endedAt: Date.now() }));
+      hist.unshift(archived);
       saveHistory(state.profile.id, hist);
+      if (firestoreReady()) Sync.pushHistoryEntry(state.profile.id, archived);
     }
     state.week = freshWeek();
     saveWeek(state.profile.id, state.week);
@@ -832,9 +912,11 @@
   document.getElementById("progress-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
 
   /* ---------------------------------------------------------------------
-   * INIT
+   * HOUSEHOLD (cross-device sync) SCREEN
    * ------------------------------------------------------------------- */
-  function init() {
+  const SYNC_SKIP_KEY = "ws_sync_skipped";
+
+  function enterApp() {
     const profiles = getProfiles();
     renderProfiles();
     const activeId = getActiveProfileId();
@@ -842,13 +924,66 @@
       selectProfile(activeId);
     } else {
       showScreen("profiles");
-    }
-
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("service-worker.js").catch(() => {});
+      watchProfilesList();
     }
   }
 
-  // wrap openFlashcard/openSpelling/openVocab to accept no-op arg from menu handler
+  document.getElementById("btn-create-household").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-create-household");
+    btn.disabled = true;
+    try {
+      const code = await Sync.createHousehold();
+      toast(`Household created! Code: ${code}`);
+      enterApp();
+    } catch (e) {
+      toast("Couldn't connect — check your internet and try again.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById("btn-join-household").addEventListener("click", async () => {
+    const input = document.getElementById("join-household-code");
+    const code = input.value.trim();
+    if (!code) { toast("Enter a code first"); return; }
+    const btn = document.getElementById("btn-join-household");
+    btn.disabled = true;
+    try {
+      const ok = await Sync.joinHousehold(code);
+      if (ok) { toast("Connected!"); enterApp(); }
+      else toast("That code wasn't found — check it and try again.");
+    } catch (e) {
+      toast("Couldn't connect — check your internet and try again.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.getElementById("join-household-code").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") document.getElementById("btn-join-household").click();
+  });
+
+  document.getElementById("btn-skip-household").addEventListener("click", () => {
+    localStorage.setItem(SYNC_SKIP_KEY, "1");
+    enterApp();
+  });
+
+  /* ---------------------------------------------------------------------
+   * INIT
+   * ------------------------------------------------------------------- */
+  function init() {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("service-worker.js").catch(() => {});
+    }
+
+    const hasHousehold = typeof Sync !== "undefined" && Sync.getHouseholdCode();
+    const skipped = localStorage.getItem(SYNC_SKIP_KEY);
+    if (hasHousehold || skipped || typeof Sync === "undefined") {
+      if (hasHousehold) watchProfilesList();
+      enterApp();
+    } else {
+      showScreen("household");
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", init);
 })();

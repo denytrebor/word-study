@@ -28,8 +28,21 @@
 
   <main id="app-main">
 
+    <!-- SCREEN: Household connect (first run only) -->
+    <section id="screen-household" class="screen active">
+      <h1 class="app-title">📚 Word Study</h1>
+      <p class="subtitle">Connect this device to your family's shared list</p>
+      <button id="btn-create-household" class="btn btn-primary">Create a New Household</button>
+      <p class="hint" style="text-align:center;margin:18px 0 8px;">— or, if another device already made one —</p>
+      <div class="new-profile-form">
+        <input type="text" id="join-household-code" placeholder="Enter household code" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="characters" maxlength="6">
+        <button id="btn-join-household" class="btn btn-secondary">Join</button>
+      </div>
+      <button id="btn-skip-household" class="btn btn-ghost">Skip — just use this device</button>
+    </section>
+
     <!-- SCREEN: Profiles -->
-    <section id="screen-profiles" class="screen active">
+    <section id="screen-profiles" class="screen">
       <h1 class="app-title">📚 Word Study</h1>
       <p class="subtitle">Who's studying today?</p>
       <div id="profile-list" class="profile-grid"></div>
@@ -37,6 +50,7 @@
         <input type="text" id="new-profile-name" placeholder="Add a new student's name" spellcheck="false" autocomplete="off" autocorrect="off">
         <button id="btn-add-profile" class="btn btn-primary">+ Add Student</button>
       </div>
+      <div id="household-info" class="household-info hidden"></div>
     </section>
 
     <!-- SCREEN: Home menu -->
@@ -276,6 +290,11 @@
 
 <div id="toast" class="toast hidden"></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/sync.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -162,6 +162,12 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
 }
 .new-profile-form input {
   flex: 1;
+  min-width: 0;
+}
+.new-profile-form .btn {
+  flex: 0 0 auto;
+  width: auto;
+  white-space: nowrap;
 }
 
 /* INPUTS */
@@ -230,6 +236,21 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   flex-shrink: 0;
 }
 .edit-actions { margin-top: 24px; }
+
+.household-info {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: 28px;
+}
+.household-copy-btn {
+  width: auto;
+  display: inline;
+  margin: 0 0 0 8px;
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  text-decoration: underline;
+}
 
 /* SESSION / CARDS */
 .session-topbar {

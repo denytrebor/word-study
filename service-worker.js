@@ -1,9 +1,11 @@
-const CACHE_NAME = "word-study-v2";
+const CACHE_NAME = "word-study-v3";
 const ASSETS = [
   "./",
   "./index.html",
   "./css/style.css",
   "./js/app.js",
+  "./js/sync.js",
+  "./js/firebase-config.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
