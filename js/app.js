@@ -230,10 +230,115 @@
     return (str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   }
 
-  // Celebrations (confetti/sound) ship as their own feature (§5) — until then
-  // these are no-op stubs so every call site can be wired up now.
-  function celebrate(intensity) { /* replaced by the celebrations feature */ }
-  function playSound(kind) { /* replaced by the celebrations feature */ }
+  /* ---------------------------------------------------------------------
+   * CELEBRATIONS (confetti + WebAudio chimes, no external assets/CDN)
+   * ------------------------------------------------------------------- */
+  const MUTE_KEY = "ws_muted";
+  function isMuted() { return localStorage.getItem(MUTE_KEY) === "1"; }
+  function setMuted(m) { localStorage.setItem(MUTE_KEY, m ? "1" : "0"); }
+
+  // Self-contained canvas confetti: a fixed full-viewport canvas, particles
+  // fall with gravity + drift + rotation, auto-removed after ~2.5s. No
+  // external library (CSP posture here is no-CDN).
+  function celebrate(intensity) {
+    const canvas = document.createElement("canvas");
+    canvas.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:200;";
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    document.body.appendChild(canvas);
+    const ctx = canvas.getContext("2d");
+    const colors = ["#4338ca", "#fb923c", "#16a34a", "#dc2626", "#eab308", "#ec4899"];
+    const count = intensity === "big" ? 90 : 40;
+    const particles = Array.from({ length: count }, () => ({
+      x: Math.random() * canvas.width,
+      y: -20 - Math.random() * canvas.height * 0.3,
+      vx: (Math.random() - 0.5) * 4,
+      vy: 2 + Math.random() * 3,
+      size: 5 + Math.random() * 6,
+      rot: Math.random() * Math.PI * 2,
+      vr: (Math.random() - 0.5) * 0.3,
+      color: colors[Math.floor(Math.random() * colors.length)],
+    }));
+    const start = performance.now();
+    const duration = 2500;
+    function frame(now) {
+      const elapsed = now - start;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach((p) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.06;
+        p.rot += p.vr;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+        ctx.restore();
+      });
+      if (elapsed < duration) requestAnimationFrame(frame);
+      else canvas.remove();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // Lazily created (and resumed) inside a user-gesture handler — iOS Safari
+  // won't let an AudioContext produce sound if it's created/started outside
+  // a direct gesture handler.
+  let audioCtx = null;
+  function ensureAudioContext() {
+    if (audioCtx) return audioCtx;
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return null;
+    try { audioCtx = new Ctor(); } catch (e) { return null; }
+    return audioCtx;
+  }
+  document.addEventListener("pointerdown", function unlockAudioOnce() {
+    const ctx = ensureAudioContext();
+    if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+    document.removeEventListener("pointerdown", unlockAudioOnce);
+  }, { once: true });
+
+  // kind: "correct" | "medal" | "purchase" | "streak" | "perfect" —
+  // a subtle single tone for plain correct answers, a two-note ascending
+  // chime for medal/purchase moments, a brighter three-note arpeggio for
+  // the big streak/perfect moments.
+  function playSound(kind) {
+    if (isMuted()) return;
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    const now = ctx.currentTime;
+    function tone(freq, startOffset, dur, peak, type) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type || "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, now + startOffset);
+      gain.gain.linearRampToValueAtTime(peak, now + startOffset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + startOffset + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now + startOffset);
+      osc.stop(now + startOffset + dur + 0.02);
+    }
+    if (kind === "correct") {
+      tone(660, 0, 0.12, 0.12);
+    } else if (kind === "medal") {
+      tone(523.25, 0, 0.14, 0.2);
+      tone(783.99, 0.1, 0.18, 0.2);
+    } else if (kind === "purchase") {
+      tone(587.33, 0, 0.12, 0.2);
+      tone(880, 0.09, 0.16, 0.2);
+    } else if (kind === "streak") {
+      tone(523.25, 0, 0.12, 0.22, "triangle");
+      tone(659.25, 0.09, 0.12, 0.22, "triangle");
+      tone(880, 0.18, 0.22, 0.22, "triangle");
+    } else if (kind === "perfect") {
+      tone(659.25, 0, 0.12, 0.22, "triangle");
+      tone(830.61, 0.09, 0.12, 0.22, "triangle");
+      tone(1046.5, 0.18, 0.24, 0.22, "triangle");
+    }
+  }
 
   /* ---------------------------------------------------------------------
    * Word status + medals (medals are derived, never stored — see spec §2)
@@ -367,6 +472,7 @@
         activity.starsEarned += starsAwarded;
         activity.starEarns[w.id] = (activity.starEarns[w.id] || 0) + starsAwarded;
       }
+      if (!silent) playSound("correct");
     }
 
     const medalUp = MEDAL_RANK[afterMedal] > MEDAL_RANK[beforeMedal];
@@ -526,6 +632,14 @@
   document.getElementById("btn-home").addEventListener("click", () => {
     renderHome();
     showScreen("home");
+  });
+
+  function refreshMuteButton() {
+    document.getElementById("btn-mute-toggle").textContent = isMuted() ? "🔇" : "🔊";
+  }
+  document.getElementById("btn-mute-toggle").addEventListener("click", () => {
+    setMuted(!isMuted());
+    refreshMuteButton();
   });
 
   /* ---------------------------------------------------------------------
@@ -1612,6 +1726,7 @@
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("service-worker.js").catch(() => {});
     }
+    refreshMuteButton();
 
     const hasHousehold = typeof Sync !== "undefined" && Sync.getHouseholdCode();
     const skipped = localStorage.getItem(SYNC_SKIP_KEY);
