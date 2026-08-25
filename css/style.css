@@ -210,7 +210,9 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 
 /* HOME MENU */
 .week-label { text-align: center; margin-bottom: 2px; }
-.word-count { text-align: center; color: var(--muted); margin-top: 0; margin-bottom: 24px; }
+.word-count { text-align: center; color: var(--muted); margin-top: 0; margin-bottom: 8px; }
+.medal-summary { text-align: center; font-weight: 700; margin-top: 0; margin-bottom: 24px; }
+.medal-summary.hidden { display: none; }
 .menu-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

@@ -41,6 +41,7 @@
   function progressKey(profileId, weekId) { return `ws_progress_${profileId}_${weekId}`; }
   function progressIndexKey(profileId) { return `ws_progress_index_${profileId}`; }
   function selectedWeekKey(profileId) { return `ws_selected_week_${profileId}`; }
+  function activityKey(profileId, date) { return `ws_activity_${profileId}_${date}`; }
 
   function saveProgressLocal(profileId, weekId, progress) {
     save(progressKey(profileId, weekId), progress);
@@ -52,10 +53,10 @@
     if (firestoreReady()) Sync.pushProgress(profileId, weekId, progress);
   }
 
-  function updateLocalProfileStars(id, stars) {
+  function updateLocalProfileFields(id, fields) {
     const profiles = getProfiles();
     const p = profiles.find((x) => x.id === id);
-    if (p) { p.stars = stars; saveProfiles(profiles); }
+    if (p) { Object.assign(p, fields); saveProfiles(profiles); }
   }
 
   function uid() {
@@ -91,6 +92,12 @@
     return s;
   }
 
+  function localDateMinusDays(dateStr, n) {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setDate(d.getDate() - n);
+    return dateToLocalStr(d);
+  }
+
   /* ---------------------------------------------------------------------
    * App state
    * ------------------------------------------------------------------- */
@@ -99,6 +106,7 @@
     catalogWeeks: [],     // every week in the connected catalog, all grades
     selectedWeek: null,   // the catalog week currently being studied
     progress: null,       // this profile's per-word stats for selectedWeek
+    activity: null,       // today's activity doc for this profile (see §3)
   };
 
   /* ---------------------------------------------------------------------
@@ -187,28 +195,207 @@
     document.getElementById("header-stars").textContent = "⭐ " + (state.profile.stars || 0);
   }
 
-  function addStars(n) {
-    state.profile.stars = (state.profile.stars || 0) + n;
+  function persistProfile() {
+    if (!state.profile) return;
     const profiles = getProfiles();
     const idx = profiles.findIndex((p) => p.id === state.profile.id);
     if (idx !== -1) profiles[idx] = state.profile;
     saveProfiles(profiles);
-    refreshHeader();
     if (firestoreReady()) Sync.pushProfile(state.profile);
+  }
+
+  function addStars(n) {
+    state.profile.stars = (state.profile.stars || 0) + n;
+    persistProfile();
+    refreshHeader();
   }
 
   function escapeAttr(str) {
     return (str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   }
 
+  // Celebrations (confetti/sound) ship as their own feature (§5) — until then
+  // these are no-op stubs so every call site can be wired up now.
+  function celebrate(intensity) { /* replaced by the celebrations feature */ }
+  function playSound(kind) { /* replaced by the celebrations feature */ }
+
   /* ---------------------------------------------------------------------
-   * Word status (for progress + repetition weighting)
+   * Word status + medals (medals are derived, never stored — see spec §2)
    * ------------------------------------------------------------------- */
   function wordStatus(w) {
     const totalAttempts = w.spelling.attempts + w.vocab.attempts;
     const totalCorrect = w.spelling.correct + w.vocab.known;
     if (totalAttempts === 0) return "new";
     return totalCorrect / totalAttempts >= 0.8 ? "solid" : "shaky";
+  }
+
+  const MEDAL_RANK = { none: 0, bronze: 1, silver: 2, gold: 3 };
+  const MEDAL_ICON = { none: "⚪", bronze: "🥉", silver: "🥈", gold: "🥇" };
+
+  function wordMedal(w) {
+    const totalCorrect = w.spelling.correct + w.vocab.known;
+    const totalAttempts = w.spelling.attempts + w.vocab.attempts;
+    const accuracy = totalAttempts ? totalCorrect / totalAttempts : 0;
+    if (totalCorrect >= 8 && accuracy >= 0.9) return "gold";
+    if (totalCorrect >= 5 && accuracy >= 0.8) return "silver";
+    if (totalCorrect >= 2) return "bronze";
+    return "none";
+  }
+
+  /* ---------------------------------------------------------------------
+   * Activity tracking + daily streak (spec §3) — one doc per local date,
+   * flush-batched (not per-answer) to stay quota-safe at classroom scale.
+   * Also the star-economy anti-farming backbone for medals (spec §2).
+   * ------------------------------------------------------------------- */
+  const STREAK_MILESTONES = { 3: 5, 7: 10, 14: 15, 30: 25, 60: 40, 100: 75 };
+
+  function freshActivity(date) {
+    return {
+      date,
+      answers: 0,
+      correct: 0,
+      starsEarned: 0,
+      starEarns: {},
+      modes: { spelling: 0, vocab: 0, scramble: 0, test: 0, speed: 0, flashcard: 0 },
+      weekIds: [],
+    };
+  }
+
+  // Lazily (re)loads today's activity doc into state.activity — safe to call
+  // often; only reloads when the profile changes or the local date rolls over.
+  function getOrInitActivity() {
+    const date = todayLocalStr();
+    if (!state.profile) return null;
+    if (!state.activity || state.activity.date !== date || state.activity._profileId !== state.profile.id) {
+      const loaded = load(activityKey(state.profile.id, date), null);
+      state.activity = loaded || freshActivity(date);
+      state.activity._profileId = state.profile.id;
+    }
+    return state.activity;
+  }
+
+  function flushActivity() {
+    if (!state.activity || !state.profile) return;
+    save(activityKey(state.profile.id, state.activity.date), state.activity);
+    if (firestoreReady()) Sync.pushActivity(state.profile.id, state.activity.date, state.activity);
+  }
+
+  function recordModeStart(mode) {
+    if (!state.profile) return;
+    const a = getOrInitActivity();
+    if (!a) return;
+    a.modes[mode] = (a.modes[mode] || 0) + 1;
+    if (state.progress && !a.weekIds.includes(state.progress.weekId)) a.weekIds.push(state.progress.weekId);
+    flushActivity();
+  }
+
+  // Streak update happens exactly once, at the first answer of a local day.
+  function ensureStreakForToday() {
+    const p = state.profile;
+    const today = todayLocalStr();
+    if (p.lastActiveDate === today) return;
+    const yesterday = localDateMinusDays(today, 1);
+    const newStreak = p.lastActiveDate === yesterday ? (p.currentStreak || 0) + 1 : 1;
+    p.currentStreak = newStreak;
+    p.bestStreak = Math.max(p.bestStreak || 0, newStreak);
+    p.lastActiveDate = today;
+    const bonus = STREAK_MILESTONES[newStreak];
+    if (bonus) {
+      addStars(bonus);
+      toast(`🔥 ${newStreak}-day streak! +${bonus} ⭐`);
+      celebrate("big");
+      playSound("streak");
+    }
+  }
+
+  // Anti-farming star economy (spec §2): gold words earn nothing, and every
+  // word caps at 3 stars/day regardless of medal, tracked in today's activity doc.
+  function starsForCorrectAnswer(w, wasGoldBefore, activity) {
+    if (wasGoldBefore) return 0;
+    const earnedSoFar = activity.starEarns[w.id] || 0;
+    if (earnedSoFar >= 3) return 0;
+    return 1;
+  }
+
+  // The single place every study mode reports an answer through — updates
+  // per-word stats, activity counters, the star economy, and medal-up
+  // detection all together so no call site can drift out of sync with another.
+  // opts.silent suppresses the medal-up toast/celebration for this call only
+  // (Test Mode's whole design is "no feedback until the final score screen" —
+  // a mid-test medal-up toast would leak whether that answer was correct).
+  // Stats, stars, activity, and streak bookkeeping still happen either way.
+  function recordAnswer(w, correct, statKind, opts) {
+    const silent = !!(opts && opts.silent);
+    const beforeMedal = wordMedal(w);
+    const wasGoldBefore = beforeMedal === "gold";
+
+    if (statKind === "spelling") {
+      w.spelling.attempts++;
+      if (correct) w.spelling.correct++;
+    } else {
+      w.vocab.attempts++;
+      if (correct) w.vocab.known++;
+    }
+    const afterMedal = wordMedal(w);
+
+    const activity = getOrInitActivity();
+    const isFirstAnswerToday = activity.answers === 0;
+    activity.answers++;
+    if (correct) activity.correct++;
+
+    let starsAwarded = 0;
+    if (correct) {
+      starsAwarded = starsForCorrectAnswer(w, wasGoldBefore, activity);
+      if (starsAwarded > 0) {
+        addStars(starsAwarded);
+        activity.starsEarned += starsAwarded;
+        activity.starEarns[w.id] = (activity.starEarns[w.id] || 0) + starsAwarded;
+      }
+    }
+
+    const medalUp = MEDAL_RANK[afterMedal] > MEDAL_RANK[beforeMedal];
+    if (medalUp && !silent) {
+      const label = afterMedal.charAt(0).toUpperCase() + afterMedal.slice(1);
+      toast(`${MEDAL_ICON[afterMedal]} "${w.text}" leveled up to ${label}!`);
+      celebrate("small");
+      playSound("medal");
+    }
+
+    if (isFirstAnswerToday) {
+      ensureStreakForToday();
+      addStars(3);
+      toast("🌞 First practice today! +3 ⭐");
+    }
+
+    if (activity.answers % 10 === 0) flushActivity();
+
+    return { starsAwarded, medalUp };
+  }
+
+  // Shared by Spelling/Vocab/Scramble, which all use a {queue, retry, round,
+  // missedThisRound} session shape: rewards a clean round 1 (no misses, real-
+  // sized list) or a fully-cleared retry round. missedThisRound (NOT
+  // retry.length — that array is only ever populated during round 1, so it's
+  // always empty by the time round 2 finishes regardless of how round 2 went)
+  // is what actually proves the round just completed had zero misses.
+  // Returns whether a bonus fired so the caller can skip its own "complete"
+  // toast in favor of this louder one.
+  function awardRoundCompletionBonus(session) {
+    if (session.round === 1 && !session.missedThisRound && session.queue.length >= 4) {
+      addStars(5);
+      toast("🌟 Perfect round! +5 ⭐");
+      celebrate("big");
+      playSound("perfect");
+      return true;
+    }
+    if (session.round === 2 && !session.missedThisRound) {
+      addStars(2);
+      toast("💪 Cleared the retries! +2 ⭐");
+      celebrate("small");
+      playSound("perfect");
+      return true;
+    }
+    return false;
   }
 
   /* ---------------------------------------------------------------------
@@ -259,11 +446,16 @@
 
   function applyRemoteProfileUpdate(data) {
     if (!state.profile) return;
-    if (typeof data.stars === "number" && data.stars !== state.profile.stars) {
-      state.profile.stars = data.stars;
-      updateLocalProfileStars(state.profile.id, data.stars);
-      refreshHeader();
-    }
+    const fields = {};
+    if (typeof data.stars === "number" && data.stars !== state.profile.stars) fields.stars = data.stars;
+    if (typeof data.currentStreak === "number" && data.currentStreak !== state.profile.currentStreak) fields.currentStreak = data.currentStreak;
+    if (typeof data.bestStreak === "number" && data.bestStreak !== state.profile.bestStreak) fields.bestStreak = data.bestStreak;
+    if (typeof data.lastActiveDate === "string" && data.lastActiveDate !== state.profile.lastActiveDate) fields.lastActiveDate = data.lastActiveDate;
+    if (Array.isArray(data.recentTests) && JSON.stringify(data.recentTests) !== JSON.stringify(state.profile.recentTests)) fields.recentTests = data.recentTests;
+    if (Object.keys(fields).length === 0) return;
+    Object.assign(state.profile, fields);
+    updateLocalProfileFields(state.profile.id, fields);
+    refreshHeader();
   }
 
   function applyRemoteProgressUpdate(data) {
@@ -285,6 +477,7 @@
     state.profile = p;
     setActiveProfileId(id);
     refreshHeader();
+    getOrInitActivity();
     if (firestoreReady()) Sync.watchProfile(id, applyRemoteProfileUpdate);
     await loadCatalogAndWeek();
   }
@@ -579,14 +772,28 @@
    * HOME SCREEN
    * ------------------------------------------------------------------- */
   function renderHome() {
+    const summary = document.getElementById("home-medal-summary");
     if (!state.selectedWeek || !state.progress) {
       document.getElementById("home-week-label").textContent = "No word list yet";
       document.getElementById("home-word-count").textContent = "Add words from Manage Word Catalog to get started";
+      summary.classList.add("hidden");
       return;
     }
     document.getElementById("home-week-label").textContent = state.selectedWeek.label;
     const n = state.progress.words.length;
     document.getElementById("home-word-count").textContent = n === 1 ? "1 word" : n + " words";
+
+    const counts = { gold: 0, silver: 0, bronze: 0 };
+    state.progress.words.forEach((w) => {
+      const m = wordMedal(w);
+      if (counts[m] !== undefined) counts[m]++;
+    });
+    if (counts.gold || counts.silver || counts.bronze) {
+      summary.textContent = `🥇 ${counts.gold} · 🥈 ${counts.silver} · 🥉 ${counts.bronze}`;
+      summary.classList.remove("hidden");
+    } else {
+      summary.classList.add("hidden");
+    }
   }
 
   document.querySelectorAll(".menu-card[data-nav]").forEach((btn) => {
@@ -616,6 +823,7 @@
     flash.order = state.progress.words.slice();
     flash.index = 0;
     document.getElementById("flash-shuffle").checked = false;
+    recordModeStart("flashcard");
     renderFlashcard();
     showScreen("flashcard");
   }
@@ -646,11 +854,12 @@
   /* ---------------------------------------------------------------------
    * SPELLING PRACTICE SESSION
    * ------------------------------------------------------------------- */
-  let spell = { queue: [], retry: [], index: 0, round: 1, streak: 0 };
+  let spell = { queue: [], retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
 
   function openSpelling() {
-    spell = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0 };
+    spell = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
     document.getElementById("spell-streak").classList.add("hidden");
+    recordModeStart("spelling");
     renderSpelling();
     showScreen("spelling");
   }
@@ -679,16 +888,15 @@
     const w = spell.queue[spell.index];
     const answer = document.getElementById("spell-input").value.trim();
     const correct = answer.toLowerCase() === w.text.trim().toLowerCase();
-    w.spelling.attempts++;
+    recordAnswer(w, correct, "spelling");
     const feedback = document.getElementById("spell-feedback");
     if (correct) {
-      w.spelling.correct++;
       spell.streak++;
-      addStars(1);
       feedback.className = "feedback correct";
       feedback.textContent = "✅ Correct! Nice work.";
     } else {
       spell.streak = 0;
+      spell.missedThisRound = true;
       if (spell.round === 1) spell.retry.push(w);
       feedback.className = "feedback incorrect";
       feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(w.text)}</span>`;
@@ -715,10 +923,12 @@
         spell.retry = [];
         spell.index = 0;
         spell.round = 2;
+        spell.missedThisRound = false;
         toast("Let's try those tricky ones again!");
         renderSpelling();
       } else {
-        toast("Spelling practice complete! ⭐");
+        if (!awardRoundCompletionBonus(spell)) toast("Spelling practice complete! ⭐");
+        flushActivity();
         renderHome();
         showScreen("home");
       }
@@ -729,6 +939,7 @@
 
   document.getElementById("spell-exit").addEventListener("click", () => {
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
+    flushActivity();
     renderHome();
     showScreen("home");
   });
@@ -736,11 +947,12 @@
   /* ---------------------------------------------------------------------
    * VOCAB PRACTICE SESSION
    * ------------------------------------------------------------------- */
-  let vocab = { queue: [], retry: [], index: 0, round: 1, streak: 0 };
+  let vocab = { queue: [], retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
 
   function openVocab() {
-    vocab = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0 };
+    vocab = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
     document.getElementById("vocab-streak").classList.add("hidden");
+    recordModeStart("vocab");
     renderVocab();
     showScreen("vocab");
   }
@@ -765,9 +977,9 @@
 
   function gradeVocab(knewIt) {
     const w = vocab.queue[vocab.index];
-    w.vocab.attempts++;
-    if (knewIt) { w.vocab.known++; vocab.streak++; addStars(1); }
-    else { vocab.streak = 0; if (vocab.round === 1) vocab.retry.push(w); }
+    recordAnswer(w, knewIt, "vocab");
+    if (knewIt) vocab.streak++;
+    else { vocab.streak = 0; vocab.missedThisRound = true; if (vocab.round === 1) vocab.retry.push(w); }
     updateStreakBadge(document.getElementById("vocab-streak"), vocab.streak);
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
 
@@ -778,10 +990,12 @@
         vocab.retry = [];
         vocab.index = 0;
         vocab.round = 2;
+        vocab.missedThisRound = false;
         toast("Let's review those again!");
         renderVocab();
       } else {
-        toast("Vocab practice complete! ⭐");
+        if (!awardRoundCompletionBonus(vocab)) toast("Vocab practice complete! ⭐");
+        flushActivity();
         renderHome();
         showScreen("home");
       }
@@ -793,6 +1007,7 @@
   document.getElementById("vocab-missed").addEventListener("click", () => gradeVocab(false));
   document.getElementById("vocab-exit").addEventListener("click", () => {
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
+    flushActivity();
     renderHome();
     showScreen("home");
   });
@@ -809,6 +1024,7 @@
       test.queue = shuffle(state.progress.words);
       test.index = 0;
       test.results = [];
+      recordModeStart("test");
       renderTest();
       showScreen("test");
     });
@@ -851,12 +1067,7 @@
 
   function nextTestWord(record) {
     const w = test.queue[test.index];
-    w.spelling.attempts += record.kind === "spelling" ? 1 : 0;
-    w.vocab.attempts += record.kind === "vocab" ? 1 : 0;
-    if (record.correct) {
-      if (record.kind === "spelling") w.spelling.correct++; else w.vocab.known++;
-      addStars(1);
-    }
+    recordAnswer(w, record.correct, record.kind, { silent: true });
     test.results.push(record);
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
 
@@ -887,11 +1098,22 @@
   });
   document.getElementById("test-exit").addEventListener("click", () => {
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
+    flushActivity();
     renderHome();
     showScreen("home");
   });
 
   function showTestResults() {
+    if (state.profile && state.progress) {
+      const total = test.results.length;
+      const right = test.results.filter((r) => r.correct).length;
+      const pct = total ? Math.round((right / total) * 100) : 0;
+      state.profile.recentTests = [
+        { date: todayLocalStr(), kind: test.kind, pct, weekId: state.progress.weekId },
+        ...(state.profile.recentTests || []),
+      ].slice(0, 5);
+      persistProfile();
+    }
     renderResultsScreen({
       title: "Test Results",
       kindLabel: (test.kind === "spelling" ? "Spelling" : "Vocab") + " Test",
@@ -918,10 +1140,17 @@
       list.appendChild(row);
     });
 
-    if (pct === 100) toast("Perfect score! Amazing! 🌟");
+    const perfectRoundBonus = total >= 4 && right === total;
+    if (perfectRoundBonus) {
+      addStars(5);
+      toast("🌟 Perfect round! +5 ⭐");
+    } else if (pct === 100) toast("Perfect score! Amazing! 🌟");
     else if (pct >= 80) toast("Great job! Almost ready! ⭐");
     else toast("Good practice — a few more rounds will help.");
 
+    if (pct >= 90) { celebrate("big"); playSound("perfect"); }
+
+    flushActivity();
     showScreen("test-results");
   }
   document.getElementById("test-results-done").addEventListener("click", () => { renderHome(); showScreen("home"); });
@@ -943,6 +1172,7 @@
         autoSpeak: document.getElementById("speed-audio-toggle").checked,
       };
       document.getElementById("speed-streak").classList.add("hidden");
+      recordModeStart("speed");
       renderSpeedCard();
       showScreen("speed");
     });
@@ -968,9 +1198,8 @@
 
   function commitSpeedAnswer(correct) {
     const w = speed.queue[speed.index];
-    if (speed.kind === "spelling") { w.spelling.attempts++; if (correct) w.spelling.correct++; }
-    else { w.vocab.attempts++; if (correct) w.vocab.known++; }
-    if (correct) { speed.streak++; addStars(1); } else { speed.streak = 0; }
+    recordAnswer(w, correct, speed.kind);
+    if (correct) speed.streak++; else speed.streak = 0;
     updateStreakBadge(document.getElementById("speed-streak"), speed.streak);
     speed.results.push({ kind: speed.kind, word: w.text, correct });
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
@@ -1001,6 +1230,7 @@
   document.getElementById("speed-missed").addEventListener("click", () => resolveSpeedSwipe("left"));
   document.getElementById("speed-exit").addEventListener("click", () => {
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
+    flushActivity();
     renderHome();
     showScreen("home");
   });
@@ -1047,11 +1277,12 @@
   /* ---------------------------------------------------------------------
    * WORD SCRAMBLE (drag letter tiles into the right order)
    * ------------------------------------------------------------------- */
-  let scramble = { queue: [], retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false };
+  let scramble = { queue: [], retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false, missedThisRound: false };
 
   function openScramble() {
-    scramble = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false };
+    scramble = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false, missedThisRound: false };
     document.getElementById("scramble-streak").classList.add("hidden");
+    recordModeStart("scramble");
     renderScrambleWord();
     showScreen("scramble");
   }
@@ -1158,16 +1389,15 @@
     const w = scramble.queue[scramble.index];
     const assembled = scramble.answer.map((tileId) => scramble.bank.find((t) => t.id === tileId).char).join("");
     const correct = assembled.toLowerCase() === w.text.trim().toLowerCase();
-    w.spelling.attempts++;
+    recordAnswer(w, correct, "spelling");
     const feedback = document.getElementById("scramble-feedback");
     if (correct) {
-      w.spelling.correct++;
       scramble.streak++;
-      addStars(1);
       feedback.className = "feedback correct";
       feedback.textContent = "✅ Correct! Nice work.";
     } else {
       scramble.streak = 0;
+      scramble.missedThisRound = true;
       if (scramble.round === 1) scramble.retry.push(w);
       feedback.className = "feedback incorrect";
       feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(w.text)}</span>`;
@@ -1187,10 +1417,12 @@
         scramble.retry = [];
         scramble.index = 0;
         scramble.round = 2;
+        scramble.missedThisRound = false;
         toast("Let's try those tricky ones again!");
         renderScrambleWord();
       } else {
-        toast("Word Scramble complete! ⭐");
+        if (!awardRoundCompletionBonus(scramble)) toast("Word Scramble complete! ⭐");
+        flushActivity();
         renderHome();
         showScreen("home");
       }
@@ -1200,6 +1432,7 @@
   });
   document.getElementById("scramble-exit").addEventListener("click", () => {
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
+    flushActivity();
     renderHome();
     showScreen("home");
   });
@@ -1208,9 +1441,9 @@
    * PROGRESS SCREEN
    * ------------------------------------------------------------------- */
   function statusMeta(status) {
-    if (status === "solid") return { icon: "✅", label: "Looking good", cls: "status-solid" };
-    if (status === "shaky") return { icon: "🔁", label: "Needs practice", cls: "status-shaky" };
-    return { icon: "⚪", label: "Not practiced yet", cls: "status-new" };
+    if (status === "solid") return { label: "Looking good", cls: "status-solid" };
+    if (status === "shaky") return { label: "Needs practice", cls: "status-shaky" };
+    return { label: "Not practiced yet", cls: "status-new" };
   }
 
   async function openProgress() {
@@ -1219,9 +1452,10 @@
     if (state.progress && state.progress.words.length) {
       state.progress.words.forEach((w) => {
         const meta = statusMeta(wordStatus(w));
+        const icon = MEDAL_ICON[wordMedal(w)];
         const row = document.createElement("div");
         row.className = "result-row " + meta.cls;
-        row.innerHTML = `<span>${meta.icon} ${escapeAttr(w.text)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${meta.label}</span>`;
+        row.innerHTML = `<span>${icon} ${escapeAttr(w.text)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${meta.label}</span>`;
         cur.appendChild(row);
       });
     } else {
@@ -1319,6 +1553,10 @@
   document.getElementById("btn-skip-household").addEventListener("click", () => {
     localStorage.setItem(SYNC_SKIP_KEY, "1");
     enterApp();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) flushActivity();
   });
 
   /* ---------------------------------------------------------------------

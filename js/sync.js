@@ -86,7 +86,16 @@ const Sync = (function () {
   async function pushProfile(profile) {
     const ref = profileRef(profile.id);
     if (!ref || !(await ready)) return;
-    ref.set({ name: profile.name, avatar: profile.avatar, stars: profile.stars || 0, grade: profile.grade || "" }, { merge: true }).catch(() => {});
+    ref.set({
+      name: profile.name,
+      avatar: profile.avatar,
+      stars: profile.stars || 0,
+      grade: profile.grade || "",
+      currentStreak: profile.currentStreak || 0,
+      bestStreak: profile.bestStreak || 0,
+      lastActiveDate: profile.lastActiveDate || "",
+      recentTests: profile.recentTests || [],
+    }, { merge: true }).catch(() => {});
   }
 
   async function fetchHouseholdCatalogCode() {
@@ -106,7 +115,17 @@ const Sync = (function () {
     if (!col) return;
     profilesUnsub = col.onSnapshot({ includeMetadataChanges: true }, (snap) => {
       if (snap.metadata.hasPendingWrites) return;
-      const list = snap.docs.map((d) => ({ id: d.id, name: d.data().name, avatar: d.data().avatar, stars: d.data().stars || 0, grade: d.data().grade || "" }));
+      const list = snap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().name,
+        avatar: d.data().avatar,
+        stars: d.data().stars || 0,
+        grade: d.data().grade || "",
+        currentStreak: d.data().currentStreak || 0,
+        bestStreak: d.data().bestStreak || 0,
+        lastActiveDate: d.data().lastActiveDate || "",
+        recentTests: d.data().recentTests || [],
+      }));
       onChange(list);
     }, () => {});
   }
@@ -219,6 +238,30 @@ const Sync = (function () {
     }, () => {});
   }
 
+  /* ------------------------------ Activity ------------------------------ */
+  // One doc per (profile, local-calendar-date) — the source of truth for
+  // streaks and the parent dashboard. Never watched live; read on demand.
+
+  function activityRef(profileId, date) {
+    const p = profileRef(profileId);
+    return p ? p.collection("activity").doc(date) : null;
+  }
+
+  async function pushActivity(profileId, date, activityDoc) {
+    const ref = activityRef(profileId, date);
+    if (!ref || !(await ready)) return;
+    ref.set(activityDoc, { merge: true }).catch(() => {});
+  }
+
+  async function fetchActivityRange(profileId, dateStrings) {
+    const p = profileRef(profileId);
+    if (!p || !(await ready)) return [];
+    const results = await Promise.all(
+      dateStrings.map((d) => p.collection("activity").doc(d).get().catch(() => null))
+    );
+    return results.filter((snap) => snap && snap.exists).map((snap) => snap.data());
+  }
+
   return {
     getHouseholdCode,
     createHousehold,
@@ -236,5 +279,7 @@ const Sync = (function () {
     fetchProgress,
     fetchAllProgress,
     watchProgress,
+    pushActivity,
+    fetchActivityRange,
   };
 })();
