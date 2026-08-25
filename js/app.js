@@ -205,9 +205,17 @@
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 
+  // equippedAvatar replaces the legacy `avatar` field at display time —
+  // profiles that never opened the shop (e.g. Micah's existing doc) keep
+  // working untouched since this just falls back to `avatar`.
+  function avatarFor(profile) {
+    return (profile && (profile.equippedAvatar || profile.avatar)) || "🙂";
+  }
+
   function refreshHeader() {
     if (!state.profile) return;
-    document.getElementById("header-profile-name").textContent = state.profile.name;
+    document.getElementById("header-avatar").textContent = avatarFor(state.profile) + " ";
+    document.getElementById("header-name-text").textContent = state.profile.name;
     document.getElementById("header-stars").textContent = "⭐ " + (state.profile.stars || 0);
   }
 
@@ -220,10 +228,19 @@
     if (firestoreReady()) Sync.pushProfile(state.profile);
   }
 
+  // `stars` is the spendable balance (shop purchases decrement it);
+  // `lifetimeStars` is monotonically increasing, so future levels/badges
+  // never conflict with what's been spent.
   function addStars(n) {
     state.profile.stars = (state.profile.stars || 0) + n;
+    state.profile.lifetimeStars = (state.profile.lifetimeStars || 0) + n;
     persistProfile();
     refreshHeader();
+  }
+
+  function applyTheme(themeId) {
+    if (themeId) document.documentElement.setAttribute("data-theme", themeId);
+    else document.documentElement.removeAttribute("data-theme");
   }
 
   function escapeAttr(str) {
@@ -533,7 +550,7 @@
       const btn = document.createElement("button");
       btn.className = "profile-card";
       const gradeLine = p.grade ? `<br><span style="font-weight:400;font-size:.75rem;color:var(--muted)">Grade ${escapeAttr(p.grade)}</span>` : "";
-      btn.innerHTML = `<span class="avatar">${p.avatar}</span>${escapeAttr(p.name)}${gradeLine}`;
+      btn.innerHTML = `<span class="avatar">${avatarFor(p)}</span>${escapeAttr(p.name)}${gradeLine}`;
       btn.addEventListener("click", () => selectProfile(p.id));
       wrap.appendChild(btn);
     });
@@ -561,7 +578,7 @@
   function watchProfilesList() {
     if (!firestoreReady()) return;
     Sync.watchProfiles((remoteList) => {
-      saveProfiles(remoteList.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, stars: p.stars, grade: p.grade || "" })));
+      saveProfiles(remoteList);
       renderProfiles();
     });
   }
@@ -574,9 +591,14 @@
     if (typeof data.bestStreak === "number" && data.bestStreak !== state.profile.bestStreak) fields.bestStreak = data.bestStreak;
     if (typeof data.lastActiveDate === "string" && data.lastActiveDate !== state.profile.lastActiveDate) fields.lastActiveDate = data.lastActiveDate;
     if (Array.isArray(data.recentTests) && JSON.stringify(data.recentTests) !== JSON.stringify(state.profile.recentTests)) fields.recentTests = data.recentTests;
+    if (Array.isArray(data.unlocks) && JSON.stringify(data.unlocks) !== JSON.stringify(state.profile.unlocks)) fields.unlocks = data.unlocks;
+    if (typeof data.equippedAvatar === "string" && data.equippedAvatar !== state.profile.equippedAvatar) fields.equippedAvatar = data.equippedAvatar;
+    if (typeof data.equippedTheme === "string" && data.equippedTheme !== state.profile.equippedTheme) fields.equippedTheme = data.equippedTheme;
+    if (typeof data.lifetimeStars === "number" && data.lifetimeStars !== state.profile.lifetimeStars) fields.lifetimeStars = data.lifetimeStars;
     if (Object.keys(fields).length === 0) return;
     Object.assign(state.profile, fields);
     updateLocalProfileFields(state.profile.id, fields);
+    if ("equippedTheme" in fields) applyTheme(fields.equippedTheme);
     refreshHeader();
   }
 
@@ -596,9 +618,16 @@
     const profiles = getProfiles();
     const p = profiles.find((x) => x.id === id);
     if (!p) return;
+    // Migration: a profile that predates the shop has no lifetimeStars yet —
+    // seed it from the current spendable balance so nothing is lost/gained.
+    if (typeof p.lifetimeStars !== "number") {
+      p.lifetimeStars = p.stars || 0;
+      saveProfiles(profiles);
+    }
     state.profile = p;
     setActiveProfileId(id);
     refreshHeader();
+    applyTheme(p.equippedTheme);
     getOrInitActivity();
     if (firestoreReady()) Sync.watchProfile(id, applyRemoteProfileUpdate);
     await loadCatalogAndWeek();
@@ -959,7 +988,8 @@
   document.querySelectorAll(".menu-card[data-nav]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const target = btn.getAttribute("data-nav");
-      if (target !== "progress" && (!state.progress || state.progress.words.length === 0)) {
+      const noWordListNeeded = target === "progress" || target === "shop";
+      if (!noWordListNeeded && (!state.progress || state.progress.words.length === 0)) {
         toast("Add some words to the catalog first!");
         openCatalogEditor();
         return;
@@ -971,6 +1001,7 @@
       else if (target === "speed-setup") showScreen("speed-setup");
       else if (target === "scramble") openScramble();
       else if (target === "progress") openProgress();
+      else if (target === "shop") openShop();
     });
   });
 
@@ -1658,6 +1689,138 @@
     });
   }
   document.getElementById("progress-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
+
+  /* ---------------------------------------------------------------------
+   * STAR SHOP (spend stars on avatars & themes)
+   * ------------------------------------------------------------------- */
+  function isUnlocked(profile, unlockId) {
+    return (profile.unlocks || []).includes(unlockId);
+  }
+
+  function openShop() {
+    renderShop();
+    showScreen("shop");
+  }
+
+  // Renders one item card in one of four states: equipped (disabled, ring),
+  // owned-not-equipped (click to equip), affordable (click to buy), or
+  // locked/too-expensive (dimmed, disabled — spec's "too expensive" state
+  // has no action, so it deliberately gets no click listener at all, not a
+  // disabled one — a disabled button never fires click events anyway).
+  function renderShopItem(wrap, { html, legendary, owned, equipped, price, onEquip, onBuy }) {
+    const stars = state.profile.stars || 0;
+    const affordable = !owned && stars >= price;
+    const cls = ["shop-item"];
+    if (equipped) cls.push("equipped");
+    else if (owned) cls.push("owned");
+    else cls.push("locked");
+    if (legendary) cls.push("legendary");
+    const btn = document.createElement("button");
+    btn.className = cls.join(" ");
+    const priceLabel = equipped ? "✓ Equipped" : owned ? "Equip" : price + " ⭐";
+    btn.innerHTML = `${html}<span class="shop-item-price">${priceLabel}</span>`;
+    if (equipped) {
+      btn.disabled = true;
+    } else if (owned) {
+      btn.addEventListener("click", onEquip);
+    } else if (affordable) {
+      btn.addEventListener("click", onBuy);
+    } else {
+      btn.disabled = true;
+    }
+    wrap.appendChild(btn);
+  }
+
+  function renderShop() {
+    const p = state.profile;
+    document.getElementById("shop-lifetime").textContent = `All-time: ${p.lifetimeStars || 0} ⭐`;
+
+    const avatarWrap = document.getElementById("shop-avatars");
+    avatarWrap.innerHTML = "";
+    ShopCatalog.AVATARS.forEach((item) => {
+      const owned = item.price === 0 || isUnlocked(p, "avatar:" + item.id);
+      const equipped = (p.equippedAvatar || p.avatar) === item.emoji;
+      renderShopItem(avatarWrap, {
+        html: `<span class="shop-item-emoji">${item.emoji}</span>`,
+        legendary: item.legendary,
+        owned,
+        equipped,
+        price: item.price,
+        onEquip: () => equipAvatar(item),
+        onBuy: () => buyItem("avatar", item),
+      });
+    });
+
+    const themeWrap = document.getElementById("shop-themes");
+    themeWrap.innerHTML = "";
+    renderShopItem(themeWrap, {
+      html: `<span class="shop-item-swatch" style="background:#4338ca"></span>`,
+      owned: true,
+      equipped: !p.equippedTheme,
+      price: 0,
+      onEquip: () => equipTheme(null),
+    });
+    ShopCatalog.THEMES.forEach((item) => {
+      const owned = isUnlocked(p, "theme:" + item.id);
+      const equipped = p.equippedTheme === item.id;
+      renderShopItem(themeWrap, {
+        html: `<span class="shop-item-swatch" style="background:${item.swatch}"></span>`,
+        owned,
+        equipped,
+        price: item.price,
+        onEquip: () => equipTheme(item),
+        onBuy: () => buyItem("theme", item),
+      });
+    });
+  }
+
+  function equipAvatar(item) {
+    const p = state.profile;
+    const unlockId = "avatar:" + item.id;
+    if (item.price > 0 && !isUnlocked(p, unlockId)) return;
+    if ((p.equippedAvatar || p.avatar) === item.emoji) return;
+    p.equippedAvatar = item.emoji;
+    persistProfile();
+    refreshHeader();
+    renderShop();
+  }
+
+  function equipTheme(item) {
+    const p = state.profile;
+    if (item && !isUnlocked(p, "theme:" + item.id)) return;
+    const themeId = item ? item.id : "";
+    if ((p.equippedTheme || "") === themeId) return;
+    p.equippedTheme = themeId;
+    persistProfile();
+    applyTheme(themeId);
+    renderShop();
+  }
+
+  // Two devices spending the same balance simultaneously can double-spend —
+  // accepted tradeoff at family scale, resolved last-write-wins via the
+  // existing profile sync. Not building conflict-resolution machinery for it.
+  function buyItem(kind, item) {
+    const p = state.profile;
+    const unlockId = kind + ":" + item.id;
+    if (isUnlocked(p, unlockId)) return;
+    if ((p.stars || 0) < item.price) return;
+    const label = kind === "avatar" ? item.emoji : item.label;
+    if (!confirm(`Buy ${label} for ${item.price} ⭐?`)) return;
+    p.stars -= item.price;
+    p.unlocks = p.unlocks || [];
+    p.unlocks.push(unlockId);
+    if (kind === "avatar") p.equippedAvatar = item.emoji;
+    else p.equippedTheme = item.id;
+    persistProfile();
+    refreshHeader();
+    if (kind === "theme") applyTheme(item.id);
+    celebrate("small");
+    playSound("purchase");
+    toast(`Bought ${label}! 🎉`);
+    renderShop();
+  }
+
+  document.getElementById("shop-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
 
   /* ---------------------------------------------------------------------
    * HOUSEHOLD (cross-device sync) SCREEN

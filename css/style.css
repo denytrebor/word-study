@@ -16,6 +16,20 @@
   font-size: 18px;
 }
 
+/* STAR SHOP THEMES — only --primary/--primary-dark/--accent/--bg change so
+   contrast against the shared white --card / dark --text stays safe by
+   construction. Galaxy is the deliberate exception (near-black --bg needs
+   its own light --text/--card/--border/--muted too — see shop-catalog.js). */
+:root[data-theme="ocean"] { --primary: #0e7490; --primary-dark: #0c5c74; --accent: #22d3ee; --bg: #e0f7fa; }
+:root[data-theme="forest"] { --primary: #15803d; --primary-dark: #14532d; --accent: #84cc16; --bg: #ecfdf3; }
+:root[data-theme="sunset"] { --primary: #ea580c; --primary-dark: #c2410c; --accent: #ec4899; --bg: #fff1e6; }
+:root[data-theme="bubblegum"] { --primary: #db2777; --primary-dark: #9d174d; --accent: #fb7185; --bg: #fff0f6; }
+:root[data-theme="gold"] { --primary: #b45309; --primary-dark: #7c3306; --accent: #facc15; --bg: #fffbea; }
+:root[data-theme="galaxy"] {
+  --primary: #7c3aed; --primary-dark: #5b21b6; --accent: #c084fc; --bg: #120f1f;
+  --text: #f3f0ff; --card: #1f1b33; --border: #382f57; --muted: #a99fcf;
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -470,6 +484,37 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 }
 .history-week .hw-title { font-weight: 700; }
 .history-week .hw-meta { color: var(--muted); font-size: 0.9rem; }
+
+/* STAR SHOP */
+.shop-lifetime { text-align: center; color: var(--muted); font-size: 0.9rem; margin: -6px 0 18px; }
+.shop-section-title { font-weight: 700; color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 22px 0 10px; }
+.shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 12px; }
+.shop-item {
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border: none;
+  border-radius: 16px;
+  padding: 14px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--text);
+  position: relative;
+}
+.shop-item:active { transform: scale(0.97); }
+.shop-item .shop-item-emoji { font-size: 2rem; }
+.shop-item .shop-item-swatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.08); }
+.shop-item .shop-item-price { font-size: 0.8rem; font-weight: 700; color: var(--muted); }
+.shop-item.equipped { outline: 3px solid var(--primary); outline-offset: 2px; }
+.shop-item.equipped .shop-item-price { color: var(--success); font-weight: 800; }
+.shop-item.owned .shop-item-price { color: var(--success); }
+.shop-item.locked { opacity: 0.45; cursor: default; }
+.shop-item.locked:active { transform: none; }
+.shop-item.legendary { background: linear-gradient(160deg, #fff7e6, var(--card) 60%); }
+.shop-item.legendary::after { content: "★"; position: absolute; top: 6px; right: 10px; color: #d97706; font-size: 0.9rem; }
+.shop-back-btn { margin-top: 8px; }
 
 /* TOAST */
 .toast {

@@ -95,6 +95,10 @@ const Sync = (function () {
       bestStreak: profile.bestStreak || 0,
       lastActiveDate: profile.lastActiveDate || "",
       recentTests: profile.recentTests || [],
+      unlocks: profile.unlocks || [],
+      equippedAvatar: profile.equippedAvatar || "",
+      equippedTheme: profile.equippedTheme || "",
+      lifetimeStars: profile.lifetimeStars || 0,
     }, { merge: true }).catch(() => {});
   }
 
@@ -125,6 +129,10 @@ const Sync = (function () {
         bestStreak: d.data().bestStreak || 0,
         lastActiveDate: d.data().lastActiveDate || "",
         recentTests: d.data().recentTests || [],
+        unlocks: d.data().unlocks || [],
+        equippedAvatar: d.data().equippedAvatar || "",
+        equippedTheme: d.data().equippedTheme || "",
+        lifetimeStars: d.data().lifetimeStars || 0,
       }));
       onChange(list);
     }, () => {});
