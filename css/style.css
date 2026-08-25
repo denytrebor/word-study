@@ -213,6 +213,22 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 .word-count { text-align: center; color: var(--muted); margin-top: 0; margin-bottom: 8px; }
 .medal-summary { text-align: center; font-weight: 700; margin-top: 0; margin-bottom: 24px; }
 .medal-summary.hidden { display: none; }
+
+.streak-banner {
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+.streak-banner.hidden { display: none; }
+.streak-banner-text { margin: 0 0 10px; font-weight: 800; font-size: 1.1rem; color: var(--accent); }
+.streak-banner.no-streak .streak-banner-text { font-weight: 700; font-size: 1rem; color: var(--muted); }
+.streak-banner-dots { display: flex; justify-content: center; gap: 8px; }
+.streak-dot { width: 15px; height: 15px; border-radius: 50%; background: var(--border); }
+.streak-dot.filled { background: var(--accent); }
+.streak-dot.today { box-shadow: 0 0 0 2px var(--primary); }
 .menu-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

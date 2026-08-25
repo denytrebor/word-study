@@ -98,6 +98,22 @@
     return dateToLocalStr(d);
   }
 
+  // Monday-Sunday dates for the calendar week containing dateStr.
+  function weekDatesMonToSun(dateStr) {
+    const d = new Date(dateStr + "T00:00:00");
+    const day = d.getDay(); // 0=Sun..6=Sat
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    const monday = new Date(d);
+    monday.setDate(monday.getDate() + mondayOffset);
+    const dates = [];
+    for (let i = 0; i < 7; i++) {
+      const cur = new Date(monday);
+      cur.setDate(cur.getDate() + i);
+      dates.push(dateToLocalStr(cur));
+    }
+    return dates;
+  }
+
   /* ---------------------------------------------------------------------
    * App state
    * ------------------------------------------------------------------- */
@@ -771,12 +787,40 @@
   /* ---------------------------------------------------------------------
    * HOME SCREEN
    * ------------------------------------------------------------------- */
+  // Dots reflect only THIS device's local activity cache, not a cross-device
+  // merge — a kid who practices on two devices may see gaps here even on a
+  // real streak. Accepted tradeoff at family scale (currentStreak itself is
+  // still accurate, since that's synced on the profile doc); avoids an extra
+  // Firestore read on every Home render for a cosmetic detail.
+  function renderStreakBanner() {
+    const banner = document.getElementById("home-streak-banner");
+    if (!state.profile) { banner.classList.add("hidden"); return; }
+    const streak = state.profile.currentStreak || 0;
+    banner.classList.toggle("no-streak", streak === 0);
+    document.getElementById("streak-banner-text").textContent =
+      streak > 0 ? `🔥 ${streak}-day streak!` : "Practice today to start a streak!";
+
+    const today = todayLocalStr();
+    const dotsWrap = document.getElementById("streak-banner-dots");
+    dotsWrap.innerHTML = "";
+    weekDatesMonToSun(today).forEach((d) => {
+      const activity = load(activityKey(state.profile.id, d), null);
+      const dot = document.createElement("span");
+      dot.className = "streak-dot";
+      if (activity && activity.answers > 0) dot.classList.add("filled");
+      if (d === today) dot.classList.add("today");
+      dotsWrap.appendChild(dot);
+    });
+    banner.classList.remove("hidden");
+  }
+
   function renderHome() {
     const summary = document.getElementById("home-medal-summary");
     if (!state.selectedWeek || !state.progress) {
       document.getElementById("home-week-label").textContent = "No word list yet";
       document.getElementById("home-word-count").textContent = "Add words from Manage Word Catalog to get started";
       summary.classList.add("hidden");
+      document.getElementById("home-streak-banner").classList.add("hidden");
       return;
     }
     document.getElementById("home-week-label").textContent = state.selectedWeek.label;
@@ -794,6 +838,8 @@
     } else {
       summary.classList.add("hidden");
     }
+
+    renderStreakBanner();
   }
 
   document.querySelectorAll(".menu-card[data-nav]").forEach((btn) => {
