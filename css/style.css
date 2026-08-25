@@ -399,6 +399,30 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   text-decoration: underline;
 }
 
+.voice-picker {
+  max-width: 420px;
+  margin: 20px auto 0;
+  text-align: center;
+}
+.voice-picker.hidden { display: none; }
+.voice-picker label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.voice-picker select {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 2px solid var(--border);
+  font-size: 0.95rem;
+  font-family: inherit;
+  background: white;
+  color: var(--text);
+}
+
 /* SESSION / CARDS */
 .session-topbar {
   display: flex;

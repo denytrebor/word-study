@@ -129,6 +129,10 @@
   /* ---------------------------------------------------------------------
    * Speech: text-to-speech + speech-to-text
    * ------------------------------------------------------------------- */
+  const VOICE_KEY = "ws_voice_uri";
+  function getSavedVoiceURI() { return localStorage.getItem(VOICE_KEY) || ""; }
+  function setSavedVoiceURI(uri) { localStorage.setItem(VOICE_KEY, uri); }
+
   function speak(text) {
     if (!("speechSynthesis" in window) || !text) return;
     try {
@@ -137,9 +141,47 @@
       u.rate = 0.85;
       u.pitch = 1;
       u.lang = "en-US";
+      const savedURI = getSavedVoiceURI();
+      if (savedURI) {
+        const match = window.speechSynthesis.getVoices().find((v) => v.voiceURI === savedURI);
+        if (match) u.voice = match;
+      }
       window.speechSynthesis.speak(u);
     } catch (e) { /* ignore */ }
   }
+
+  // A device-level setting (not per-profile) — voice availability depends on
+  // the browser/OS, not on who's using the app. Chrome often returns an
+  // empty voice list on first call and fires "voiceschanged" once it's
+  // actually loaded, so this populates both eagerly and on that event.
+  function populateVoiceSelect() {
+    if (!("speechSynthesis" in window)) return;
+    const select = document.getElementById("voice-select");
+    const wrap = document.getElementById("voice-picker");
+    if (!select || !wrap) return;
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return;
+    const sorted = voices.slice().sort((a, b) => {
+      const aEn = a.lang.toLowerCase().startsWith("en") ? 0 : 1;
+      const bEn = b.lang.toLowerCase().startsWith("en") ? 0 : 1;
+      if (aEn !== bEn) return aEn - bEn;
+      return a.name.localeCompare(b.name);
+    });
+    const saved = getSavedVoiceURI();
+    const options = ['<option value="">Default</option>']
+      .concat(sorted.map((v) => `<option value="${escapeAttr(v.voiceURI)}">${escapeAttr(v.name)} (${escapeAttr(v.lang)})</option>`));
+    select.innerHTML = options.join("");
+    select.value = saved && sorted.some((v) => v.voiceURI === saved) ? saved : "";
+    wrap.classList.remove("hidden");
+  }
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.onvoiceschanged = populateVoiceSelect;
+    populateVoiceSelect();
+  }
+  document.getElementById("voice-select").addEventListener("change", (e) => {
+    setSavedVoiceURI(e.target.value);
+    speak("This is your reading voice.");
+  });
 
   const SpeechRecCtor = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   const micSupported = !!SpeechRecCtor;
