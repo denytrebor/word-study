@@ -123,6 +123,7 @@
     selectedWeek: null,   // the catalog week currently being studied
     progress: null,       // this profile's per-word stats for selectedWeek
     activity: null,       // today's activity doc for this profile (see §3)
+    parentProfile: null,  // the parent profile currently viewing the dashboard, if any
   };
 
   /* ---------------------------------------------------------------------
@@ -200,7 +201,7 @@
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
     document.getElementById("screen-" + id).classList.add("active");
     const header = document.getElementById("app-header");
-    header.classList.toggle("hidden", id === "profiles" || id === "household");
+    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard");
     window.scrollTo(0, 0);
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
@@ -380,6 +381,39 @@
     return "none";
   }
 
+  // null = never practiced (so callers can sort it separately from a low-
+  // but-nonzero accuracy word).
+  function wordAccuracy(w) {
+    const correct = w.spelling.correct + w.vocab.known;
+    const attempts = w.spelling.attempts + w.vocab.attempts;
+    return attempts ? correct / attempts : null;
+  }
+
+  // Every current-week word that isn't "solid," worst accuracy first,
+  // never-practiced words last — the parent dashboard's "what to drill"
+  // panel (spec §6).
+  function wordsNeedingWork(progress) {
+    if (!progress) return [];
+    return progress.words
+      .filter((w) => wordStatus(w) !== "solid")
+      .sort((a, b) => {
+        const aa = wordAccuracy(a), ba = wordAccuracy(b);
+        if (aa === null && ba === null) return 0;
+        if (aa === null) return 1;
+        if (ba === null) return -1;
+        return aa - ba;
+      });
+  }
+
+  function relativeDateLabel(dateStr) {
+    if (!dateStr) return "never";
+    const today = todayLocalStr();
+    if (dateStr === today) return "today";
+    if (dateStr === localDateMinusDays(today, 1)) return "yesterday";
+    const d = new Date(dateStr + "T00:00:00");
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
   /* ---------------------------------------------------------------------
    * Activity tracking + daily streak (spec §3) — one doc per local date,
    * flush-batched (not per-answer) to stay quota-safe at classroom scale.
@@ -544,9 +578,12 @@
 
   function renderProfiles() {
     const list = getProfiles();
+    const students = list.filter((p) => p.role !== "parent");
+    const parents = list.filter((p) => p.role === "parent");
+
     const wrap = document.getElementById("profile-list");
     wrap.innerHTML = "";
-    list.forEach((p) => {
+    students.forEach((p) => {
       const btn = document.createElement("button");
       btn.className = "profile-card";
       const gradeLine = p.grade ? `<br><span style="font-weight:400;font-size:.75rem;color:var(--muted)">Grade ${escapeAttr(p.grade)}</span>` : "";
@@ -554,6 +591,22 @@
       btn.addEventListener("click", () => selectProfile(p.id));
       wrap.appendChild(btn);
     });
+
+    const parentWrap = document.getElementById("parent-list");
+    parentWrap.innerHTML = "";
+    parentWrap.classList.toggle("hidden", parents.length === 0);
+    parents.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.className = "parent-card";
+      btn.innerHTML = `🔒 ${escapeAttr(p.name)}`;
+      btn.addEventListener("click", () => openParentPinEntry(p));
+      parentWrap.appendChild(btn);
+    });
+
+    closeParentPinEntry();
+    document.getElementById("add-parent-form").classList.add("hidden");
+    document.getElementById("add-parent-hint").classList.add("hidden");
+
     const code = typeof Sync !== "undefined" ? Sync.getHouseholdCode() : null;
     const info = document.getElementById("household-info");
     info.classList.remove("hidden");
@@ -640,7 +693,8 @@
     if (!name) { toast("Type a name first"); return; }
     const grade = gradeInput.value.trim();
     const profiles = getProfiles();
-    const p = { id: uid(), name, avatar: AVATARS[profiles.length % AVATARS.length], stars: 0, grade };
+    const studentCount = profiles.filter((x) => x.role !== "parent").length;
+    const p = { id: uid(), name, avatar: AVATARS[studentCount % AVATARS.length], stars: 0, grade };
     profiles.push(p);
     saveProfiles(profiles);
     input.value = "";
@@ -652,6 +706,226 @@
   function addProfileOnEnter(e) { if (e.key === "Enter") document.getElementById("btn-add-profile").click(); }
   document.getElementById("new-profile-name").addEventListener("keydown", addProfileOnEnter);
   document.getElementById("new-profile-grade").addEventListener("keydown", addProfileOnEnter);
+
+  /* ---------------------------------------------------------------------
+   * PARENT PROFILES (role:"parent" — child-proofing PIN, not security;
+   * see spec §6. No grade/stars/streak/progress for these profiles.)
+   * ------------------------------------------------------------------- */
+  document.getElementById("btn-show-add-parent").addEventListener("click", () => {
+    document.getElementById("add-parent-form").classList.remove("hidden");
+    document.getElementById("add-parent-hint").classList.remove("hidden");
+  });
+
+  document.getElementById("btn-add-parent").addEventListener("click", () => {
+    const nameInput = document.getElementById("new-parent-name");
+    const pinInput = document.getElementById("new-parent-pin");
+    const name = nameInput.value.trim();
+    const pin = pinInput.value.trim();
+    if (!name) { toast("Type a name first"); return; }
+    if (!/^\d{4}$/.test(pin)) { toast("PIN must be 4 digits"); return; }
+    const profiles = getProfiles();
+    const p = { id: uid(), name, role: "parent", pin };
+    profiles.push(p);
+    saveProfiles(profiles);
+    nameInput.value = "";
+    pinInput.value = "";
+    renderProfiles();
+    if (firestoreReady()) Sync.pushProfile(p);
+    toast(`Parent profile "${name}" created`);
+  });
+
+  let parentPinAttempts = 0;
+  let parentPinTarget = null;
+
+  function openParentPinEntry(parentProfile) {
+    parentPinTarget = parentProfile;
+    parentPinAttempts = 0;
+    document.getElementById("parent-pin-name").textContent = parentProfile.name;
+    document.getElementById("parent-pin-input").value = "";
+    document.getElementById("parent-pin-entry").classList.remove("hidden");
+    document.getElementById("parent-pin-input").focus();
+  }
+  function closeParentPinEntry() {
+    parentPinTarget = null;
+    document.getElementById("parent-pin-entry").classList.add("hidden");
+  }
+  document.getElementById("btn-parent-pin-cancel").addEventListener("click", closeParentPinEntry);
+  document.getElementById("parent-pin-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") document.getElementById("btn-parent-pin-submit").click();
+  });
+  document.getElementById("btn-parent-pin-submit").addEventListener("click", () => {
+    if (!parentPinTarget) return;
+    const entered = document.getElementById("parent-pin-input").value.trim();
+    if (entered === parentPinTarget.pin) {
+      const p = parentPinTarget;
+      closeParentPinEntry();
+      enterParentMode(p);
+    } else {
+      parentPinAttempts++;
+      document.getElementById("parent-pin-input").value = "";
+      if (parentPinAttempts >= 3) {
+        toast("Too many wrong attempts");
+        closeParentPinEntry();
+      } else {
+        toast("Wrong PIN");
+      }
+    }
+  });
+
+  // Deliberately bypasses selectProfile entirely — no catalog/week/progress
+  // load, no ACTIVE_KEY persistence. Parents re-enter their PIN every visit;
+  // the app must never auto-resume into parent mode on reload.
+  function enterParentMode(parentProfile) {
+    state.parentProfile = parentProfile;
+    openParentDashboard();
+  }
+
+  function openParentDashboard() {
+    document.getElementById("parent-dash-title").textContent = `👋 ${state.parentProfile.name}`;
+    showScreen("parent-dashboard");
+    loadParentDashboard();
+  }
+
+  document.getElementById("parent-dash-refresh").addEventListener("click", () => loadParentDashboard());
+  document.getElementById("parent-dash-exit").addEventListener("click", () => {
+    state.parentProfile = null;
+    renderProfiles();
+    showScreen("profiles");
+    watchProfilesList();
+  });
+
+  function pctClass(pct) {
+    if (pct >= 90) return "psc-pct-green";
+    if (pct >= 70) return "psc-pct-amber";
+    return "psc-pct-red";
+  }
+
+  // Builds one student's dashboard data: current week (auto-computed the
+  // same way Home does, since a parent's device may never have loaded that
+  // student's own local week-selection cache), that week's progress doc,
+  // and the last 7 days of activity docs (7 point-reads by known date-string
+  // id — no collection query — per spec §6's quota note).
+  async function loadStudentDashboardData(student) {
+    let week = null;
+    if (student.grade) week = computeAutoWeek(state.catalogWeeks, student.grade);
+    if (!week && state.catalogWeeks.length) week = state.catalogWeeks[0];
+
+    // Local-first, same as the rest of the app (loadProgressForWeek,
+    // loadCatalogAndWeek): a single local-only device is a fully supported
+    // mode, and on that device the parent dashboard IS reading the same
+    // localStorage the student's own session just wrote to.
+    let progress = null;
+    if (week) {
+      progress = load(progressKey(student.id, week.id), null);
+      if (!progress && firestoreReady()) {
+        try { progress = await Sync.fetchProgress(student.id, week.id); } catch (e) { /* ignore */ }
+      }
+    }
+
+    const today = todayLocalStr();
+    const dates = weekDatesMonToSun(today);
+    const activityByDate = {};
+    dates.forEach((d) => {
+      const local = load(activityKey(student.id, d), null);
+      if (local) activityByDate[d] = local;
+    });
+    if (firestoreReady()) {
+      try {
+        const remote = await Sync.fetchActivityRange(student.id, dates);
+        remote.forEach((a) => { activityByDate[a.date] = a; });
+      } catch (e) { /* ignore */ }
+    }
+
+    return { student, week, progress, dates, activityByDate };
+  }
+
+  function renderStudentCard(data) {
+    const { student, week, progress, dates, activityByDate } = data;
+    const today = todayLocalStr();
+
+    let weekAnswers = 0, weekCorrect = 0;
+    const modeTotals = {};
+    dates.forEach((d) => {
+      const a = activityByDate[d];
+      if (!a) return;
+      weekAnswers += a.answers || 0;
+      weekCorrect += a.correct || 0;
+      Object.entries(a.modes || {}).forEach(([mode, n]) => { modeTotals[mode] = (modeTotals[mode] || 0) + n; });
+    });
+    const weekAccuracy = weekAnswers ? Math.round((weekCorrect / weekAnswers) * 100) : null;
+    let mostUsedMode = null, mostUsedCount = 0;
+    Object.entries(modeTotals).forEach(([mode, n]) => { if (n > mostUsedCount) { mostUsedMode = mode; mostUsedCount = n; } });
+
+    const dotsHtml = dates.map((d) => {
+      const filled = activityByDate[d] && activityByDate[d].answers > 0;
+      const cls = ["psc-dot"];
+      if (filled) cls.push("filled");
+      if (d === today) cls.push("today");
+      return `<span class="${cls.join(" ")}"></span>`;
+    }).join("");
+
+    const medalCounts = { gold: 0, silver: 0, bronze: 0, none: 0 };
+    (progress ? progress.words : []).forEach((w) => { medalCounts[wordMedal(w)]++; });
+    const needsWork = wordsNeedingWork(progress);
+
+    const needsWorkHtml = needsWork.length
+      ? needsWork.map((w) => {
+          const acc = wordAccuracy(w);
+          const unpracticed = acc === null;
+          return `<div class="psc-needs-work-row${unpracticed ? " unpracticed" : ""}"><span>${escapeAttr(w.text)}</span><span>${unpracticed ? "not practiced" : Math.round(acc * 100) + "%"}</span></div>`;
+        }).join("")
+      : `<p class="psc-empty">Nothing needs extra work right now! 🎉</p>`;
+
+    const recentTests = student.recentTests || [];
+    const testsHtml = recentTests.length
+      ? recentTests.map((t) => `<div class="psc-tests-row"><span>${escapeAttr(t.date)} · ${t.kind === "spelling" ? "Spelling" : "Vocab"}</span><span class="${pctClass(t.pct)}">${t.pct}%</span></div>`).join("")
+      : `<p class="psc-empty">No tests taken yet.</p>`;
+
+    return `
+      <div class="parent-student-card">
+        <div class="psc-identity">
+          <span class="avatar">${avatarFor(student)}</span>
+          <div>
+            <div class="psc-name">${escapeAttr(student.name)}</div>
+            <div class="psc-meta">${student.grade ? "Grade " + escapeAttr(student.grade) : "No grade set"}</div>
+          </div>
+          <div class="psc-stat-row">
+            <span>⭐ ${student.stars || 0} <span style="font-weight:400;color:var(--muted)">(${student.lifetimeStars || 0} lifetime)</span></span>
+            <span>🔥 ${student.currentStreak || 0} <span style="font-weight:400;color:var(--muted)">(best ${student.bestStreak || 0})</span></span>
+          </div>
+        </div>
+
+        <p class="psc-usage-line">Last practiced: <strong>${relativeDateLabel(student.lastActiveDate)}</strong></p>
+        <div class="psc-dots">${dotsHtml}</div>
+        <p class="psc-usage-line">${weekAnswers} answers this week${weekAccuracy !== null ? " · " + weekAccuracy + "% accuracy" : ""}${mostUsedMode ? " · mostly " + mostUsedMode : ""}</p>
+
+        <p class="psc-section-title">${week ? escapeAttr(week.label) : "No word list"}</p>
+        ${week ? `<p class="psc-usage-line">🥇 ${medalCounts.gold} · 🥈 ${medalCounts.silver} · 🥉 ${medalCounts.bronze} · ⚪ ${medalCounts.none}</p>` : ""}
+        <p class="psc-section-title">Needs work</p>
+        <div class="psc-needs-work">${needsWorkHtml}</div>
+
+        <p class="psc-section-title">Recent tests</p>
+        <div>${testsHtml}</div>
+      </div>`;
+  }
+
+  async function loadParentDashboard() {
+    const wrap = document.getElementById("parent-dash-cards");
+    const students = getProfiles().filter((p) => p.role !== "parent");
+    if (!students.length) {
+      wrap.innerHTML = '<p class="psc-empty">No student profiles in this household yet.</p>';
+      return;
+    }
+    wrap.innerHTML = students.map((s) => `<div class="parent-student-card"><p class="psc-loading">Loading ${escapeAttr(s.name)}…</p></div>`).join("");
+
+    await ensureCatalogLoaded();
+    const results = await Promise.all(students.map((s) => loadStudentDashboardData(s)));
+
+    // Bail if the parent exited (or a different one entered) while this
+    // was in flight — don't clobber whatever screen is showing now.
+    if (!state.parentProfile) return;
+    wrap.innerHTML = results.map(renderStudentCard).join("");
+  }
 
   document.getElementById("btn-switch-profile").addEventListener("click", () => {
     renderProfiles();
@@ -720,7 +994,12 @@
     showScreen("home");
   }
 
-  async function loadCatalogAndWeek() {
+  // Returns the catalog code in use, or null if this household has none yet
+  // connected (only meaningful when firestoreReady()). Populates
+  // state.catalogWeeks either way. Shared by the student catalog/week flow
+  // and the parent dashboard, which needs word lists but must never touch
+  // per-profile week selection.
+  async function ensureCatalogLoaded() {
     let code;
     if (!firestoreReady()) {
       code = LOCAL_CATALOG;
@@ -732,10 +1011,7 @@
       }
       if (!code) {
         state.catalogWeeks = [];
-        state.selectedWeek = null;
-        state.progress = null;
-        showScreen("catalog-setup");
-        return;
+        return null;
       }
     }
 
@@ -745,6 +1021,17 @@
         const remote = await Sync.fetchCatalogWeeks(code);
         if (remote.length) { state.catalogWeeks = remote; save(catalogWeeksKey(code), remote); }
       } catch (e) { /* fall back to local cache */ }
+    }
+    return code;
+  }
+
+  async function loadCatalogAndWeek() {
+    const code = await ensureCatalogLoaded();
+    if (!code) {
+      state.selectedWeek = null;
+      state.progress = null;
+      showScreen("catalog-setup");
+      return;
     }
 
     let week = null;
@@ -1831,7 +2118,9 @@
     const profiles = getProfiles();
     renderProfiles();
     const activeId = getActiveProfileId();
-    if (activeId && profiles.find((p) => p.id === activeId)) {
+    const activeProfile = activeId && profiles.find((p) => p.id === activeId);
+    // Parents are never auto-resumed — they re-enter their PIN every visit.
+    if (activeProfile && activeProfile.role !== "parent") {
       selectProfile(activeId);
     } else {
       showScreen("profiles");

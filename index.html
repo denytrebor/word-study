@@ -49,12 +49,44 @@
       <h1 class="app-title">📚 Word Study</h1>
       <p class="subtitle">Who's studying today?</p>
       <div id="profile-list" class="profile-grid"></div>
+      <div id="parent-list" class="parent-row hidden"></div>
+
+      <div id="parent-pin-entry" class="parent-pin-entry hidden">
+        <p class="hint" id="parent-pin-prompt">Enter PIN for <strong id="parent-pin-name"></strong></p>
+        <input type="text" id="parent-pin-input" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off">
+        <div class="parent-pin-actions">
+          <button id="btn-parent-pin-submit" class="btn btn-primary">Enter</button>
+          <button id="btn-parent-pin-cancel" class="btn btn-ghost">Cancel</button>
+        </div>
+      </div>
+
       <div class="new-profile-form">
         <input type="text" id="new-profile-name" placeholder="Student's name" spellcheck="false" autocomplete="off" autocorrect="off">
         <input type="text" id="new-profile-grade" class="grade-field" placeholder="Grade" spellcheck="false" autocomplete="off" autocorrect="off">
         <button id="btn-add-profile" class="btn btn-primary">+ Add Student</button>
       </div>
+
+      <button id="btn-show-add-parent" class="btn btn-ghost add-parent-link">👨‍👧 Add a parent</button>
+      <div id="add-parent-form" class="new-profile-form hidden">
+        <input type="text" id="new-parent-name" placeholder="Parent's name" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="new-parent-pin" class="grade-field" inputmode="numeric" maxlength="4" placeholder="PIN" autocomplete="off">
+        <button id="btn-add-parent" class="btn btn-secondary">Create</button>
+      </div>
+      <p class="hint add-parent-hint hidden" id="add-parent-hint">The PIN is just to keep curious kids out — not real security. Forgot it? Add another parent profile.</p>
+
       <div id="household-info" class="household-info hidden"></div>
+    </section>
+
+    <!-- SCREEN: Parent Dashboard (read-only) -->
+    <section id="screen-parent-dashboard" class="screen">
+      <div class="parent-dash-header">
+        <h2 id="parent-dash-title">Parent Dashboard</h2>
+        <div class="parent-dash-actions">
+          <button id="parent-dash-refresh" class="btn btn-ghost">🔄 Refresh</button>
+          <button id="parent-dash-exit" class="btn btn-ghost">Exit</button>
+        </div>
+      </div>
+      <div id="parent-dash-cards"></div>
     </section>
 
     <!-- SCREEN: Catalog connect (word lists live here, separate from household privacy) -->

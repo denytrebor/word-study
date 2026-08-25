@@ -88,7 +88,7 @@ const Sync = (function () {
     if (!ref || !(await ready)) return;
     ref.set({
       name: profile.name,
-      avatar: profile.avatar,
+      avatar: profile.avatar || "",
       stars: profile.stars || 0,
       grade: profile.grade || "",
       currentStreak: profile.currentStreak || 0,
@@ -99,6 +99,8 @@ const Sync = (function () {
       equippedAvatar: profile.equippedAvatar || "",
       equippedTheme: profile.equippedTheme || "",
       lifetimeStars: profile.lifetimeStars || 0,
+      role: profile.role || "",
+      pin: profile.pin || "",
     }, { merge: true }).catch(() => {});
   }
 
@@ -133,6 +135,8 @@ const Sync = (function () {
         equippedAvatar: d.data().equippedAvatar || "",
         equippedTheme: d.data().equippedTheme || "",
         lifetimeStars: d.data().lifetimeStars || 0,
+        role: d.data().role || "",
+        pin: d.data().pin || "",
       }));
       onChange(list);
     }, () => {});
