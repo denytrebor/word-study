@@ -290,6 +290,21 @@
     return (str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   }
 
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => toast("Copied!")).catch(() => toast(text));
+    } else {
+      toast(text);
+    }
+  }
+
+  // "household" or "catalog" — a link that pre-fills the matching join/
+  // connect field so the recipient just has to tap a button instead of
+  // typing a code by hand.
+  function inviteURL(kind, code) {
+    return `${location.origin}${location.pathname}?${kind}=${encodeURIComponent(code)}`;
+  }
+
   /* ---------------------------------------------------------------------
    * CELEBRATIONS (confetti + WebAudio chimes, no external assets/CDN)
    * ------------------------------------------------------------------- */
@@ -653,15 +668,10 @@
     const info = document.getElementById("household-info");
     info.classList.remove("hidden");
     if (code) {
-      info.innerHTML = 'Household code: <strong id="household-code-display"></strong> <button id="btn-copy-household" class="btn btn-ghost household-copy-btn">Copy</button>';
+      info.innerHTML = 'Household code: <strong id="household-code-display"></strong> <button id="btn-copy-household" class="btn btn-ghost household-copy-btn">Copy</button> <button id="btn-copy-household-link" class="btn btn-ghost household-copy-btn">🔗 Copy invite link</button>';
       document.getElementById("household-code-display").textContent = code;
-      document.getElementById("btn-copy-household").addEventListener("click", () => {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(code).then(() => toast("Copied!")).catch(() => toast(code));
-        } else {
-          toast(code);
-        }
-      });
+      document.getElementById("btn-copy-household").addEventListener("click", () => copyToClipboard(code));
+      document.getElementById("btn-copy-household-link").addEventListener("click", () => copyToClipboard(inviteURL("household", code)));
     } else if (typeof Sync !== "undefined") {
       info.innerHTML = '<button id="btn-open-household" class="btn btn-ghost household-copy-btn">🔗 Sync across devices</button>';
       document.getElementById("btn-open-household").addEventListener("click", () => showScreen("household"));
@@ -1170,16 +1180,43 @@
 
   let catalogParsePreview = [];
 
-  function openCatalogEditor() {
+  async function openCatalogEditor() {
     const code = getCatalogCode();
     document.getElementById("catalog-code-display").textContent = code === LOCAL_CATALOG ? "(this device only)" : code;
     document.getElementById("catalog-paste-input").value = "";
     document.getElementById("catalog-preview").classList.add("hidden");
     document.getElementById("btn-save-catalog").classList.add("hidden");
+    document.getElementById("btn-copy-catalog-link").classList.toggle("hidden", code === LOCAL_CATALOG);
     showScreen("catalog-editor");
+
+    // Ownership is a soft guardrail (same posture as household/catalog
+    // codes themselves), not a hard permission — it just keeps someone from
+    // *accidentally* overwriting another household's shared word list. A
+    // catalog with no ownerHousehold on record (e.g. the real zoelive
+    // catalog, created before this existed) stays editable by everyone, so
+    // nothing already live gets locked out.
+    const note = document.getElementById("catalog-readonly-note");
+    const form = document.getElementById("catalog-editor-form");
+    note.classList.add("hidden");
+    form.classList.remove("hidden");
+    if (code !== LOCAL_CATALOG && firestoreReady()) {
+      try {
+        const meta = await Sync.fetchCatalogMeta(code);
+        const owner = meta && meta.ownerHousehold;
+        if (owner && owner !== Sync.getHouseholdCode()) {
+          note.textContent = "This catalog is managed by another household — you can use it, but only they can add or change words. Ask them to add new weeks, or connect a different catalog.";
+          note.classList.remove("hidden");
+          form.classList.add("hidden");
+        }
+      } catch (e) { /* ignore — fail open to editable, matching the app's existing offline-friendly fallbacks */ }
+    }
   }
   document.getElementById("btn-manage-catalog").addEventListener("click", openCatalogEditor);
   document.getElementById("catalog-editor-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
+  document.getElementById("btn-copy-catalog-link").addEventListener("click", () => {
+    const code = getCatalogCode();
+    if (code && code !== LOCAL_CATALOG) copyToClipboard(inviteURL("catalog", code));
+  });
 
   document.getElementById("btn-preview-catalog").addEventListener("click", () => {
     const text = document.getElementById("catalog-paste-input").value;
@@ -2212,6 +2249,27 @@
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) flushActivity();
   });
+
+  // Pre-fills the matching field from an invite link (?household=CODE or
+  // ?catalog=CODE) — the input nodes persist for the app's whole lifetime
+  // (screens are just hidden/shown), so setting the value once here is
+  // enough regardless of when the user actually reaches that screen.
+  (function consumeInviteLinkParams() {
+    const params = new URLSearchParams(location.search);
+    const householdInvite = params.get("household");
+    const catalogInvite = params.get("catalog");
+    if (householdInvite) {
+      const el = document.getElementById("join-household-code");
+      if (el) el.value = householdInvite.toUpperCase();
+    }
+    if (catalogInvite) {
+      const el = document.getElementById("catalog-code-input");
+      if (el) el.value = catalogInvite;
+    }
+    if (householdInvite || catalogInvite) {
+      history.replaceState(null, "", location.pathname);
+    }
+  })();
 
   /* ---------------------------------------------------------------------
    * INIT

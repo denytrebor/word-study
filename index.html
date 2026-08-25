@@ -109,11 +109,15 @@
     <section id="screen-catalog-editor" class="screen">
       <h2>📚 Manage Word Catalog</h2>
       <p class="hint">Paste a whole year at once. Start each grade with a line like <code>GRADE 7 (starts 2026-09-01)</code>, then list words for each week — separate weeks with a blank line. Add a comma and a definition for vocab practice.</p>
-      <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 7 (starts 2026-09-01)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;friend&#10;habit, something you do often" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
-      <button id="btn-preview-catalog" class="btn btn-secondary">Preview</button>
-      <div id="catalog-preview" class="results-list hidden"></div>
-      <button id="btn-save-catalog" class="btn btn-primary hidden">Save to Catalog</button>
+      <p class="hint catalog-readonly-note hidden" id="catalog-readonly-note"></p>
+      <div id="catalog-editor-form">
+        <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 7 (starts 2026-09-01)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;friend&#10;habit, something you do often" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+        <button id="btn-preview-catalog" class="btn btn-secondary">Preview</button>
+        <div id="catalog-preview" class="results-list hidden"></div>
+        <button id="btn-save-catalog" class="btn btn-primary hidden">Save to Catalog</button>
+      </div>
       <p class="hint" style="text-align:center;margin-top:18px;">Catalog code: <strong id="catalog-code-display"></strong></p>
+      <button id="btn-copy-catalog-link" class="btn btn-ghost household-copy-btn">🔗 Copy invite link</button>
       <button id="catalog-editor-exit" class="btn btn-ghost">Back</button>
     </section>
 

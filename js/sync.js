@@ -184,7 +184,16 @@ const Sync = (function () {
     const ref = catalogRef(clean);
     const snap = await ref.get();
     if (!snap.exists) {
-      await ref.set({ createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+      // ownerHousehold is a soft guardrail, not a security boundary — same
+      // posture as the household/catalog codes themselves (rules only check
+      // "is this client authenticated"). It exists so the UI can warn
+      // someone before they overwrite another household's shared word list;
+      // it can't stop a determined technical user from writing directly.
+      const hCode = getHouseholdCode();
+      await ref.set({
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        ownerHousehold: hCode || "",
+      });
     }
     const hCode = getHouseholdCode();
     if (hCode) {
@@ -192,6 +201,13 @@ const Sync = (function () {
     }
     localStorage.setItem(CATALOG_KEY, clean);
     return clean;
+  }
+
+  async function fetchCatalogMeta(catalogCode) {
+    const ref = catalogRef(catalogCode);
+    if (!ref || !(await ready)) return null;
+    const snap = await ref.get();
+    return snap.exists ? snap.data() : null;
   }
 
   async function saveCatalogWeeks(catalogCode, weeks) {
@@ -285,6 +301,7 @@ const Sync = (function () {
     getCatalogCode,
     cacheCatalogCode,
     connectCatalog,
+    fetchCatalogMeta,
     saveCatalogWeeks,
     fetchCatalogWeeks,
     pushProgress,

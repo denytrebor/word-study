@@ -390,6 +390,14 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   font-size: 0.9rem;
   margin-top: 28px;
 }
+.catalog-readonly-note {
+  background: #fff7ed;
+  color: #c2410c;
+  padding: 12px 14px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+}
+.catalog-readonly-note.hidden { display: none; }
 .household-copy-btn {
   width: auto;
   display: inline;
