@@ -243,7 +243,7 @@
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
     document.getElementById("screen-" + id).classList.add("active");
     const header = document.getElementById("app-header");
-    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard");
+    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal");
     window.scrollTo(0, 0);
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
@@ -255,9 +255,27 @@
     return (profile && (profile.equippedAvatar || profile.avatar)) || "🙂";
   }
 
+  // An avatar value is either an emoji character (the original shop) or
+  // "char:<id>" pointing at illustrated art in assets/avatars (the character
+  // shop). Every place that shows an avatar goes through this so the two
+  // kinds render side by side — never assume the value is safe text, an
+  // unknown "char:" id must not become a broken <img> with a raw src.
+  function avatarHtml(profile) {
+    const value = avatarFor(profile);
+    if (typeof value === "string" && value.indexOf("char:") === 0) {
+      const id = value.slice(5);
+      const item = ShopCatalog.CHARACTERS.find((c) => c.id === id);
+      if (item) {
+        return `<img class="avatar-img" src="assets/avatars/${item.id}.webp" alt="${escapeAttr(item.label)}">`;
+      }
+      return "🙂"; // catalog entry gone (or synced from a newer build) — don't emit a dead image
+    }
+    return escapeAttr(value);
+  }
+
   function refreshHeader() {
     if (!state.profile) return;
-    document.getElementById("header-avatar").textContent = avatarFor(state.profile) + " ";
+    document.getElementById("header-avatar").innerHTML = avatarHtml(state.profile) + " ";
     document.getElementById("header-name-text").textContent = state.profile.name;
     document.getElementById("header-stars").textContent = "⭐ " + (state.profile.stars || 0);
   }
@@ -286,8 +304,22 @@
     else document.documentElement.removeAttribute("data-theme");
   }
 
+  // Escapes for both HTML text-node and double-quoted-attribute contexts —
+  // every call site in this file uses one of those two. `>` and `'` were
+  // historically left out (harmless in a text node or a double-quoted
+  // attribute, which is everywhere this was actually used), but that made
+  // the function correct only by way of every future call site happening to
+  // avoid single-quoted attributes — flagged as fragile-not-broken in the
+  // 2026-08-26 security review. Escaping all five now removes that
+  // assumption instead of documenting it. `&` must be escaped first, or
+  // escaping the others would double-escape their own `&`.
   function escapeAttr(str) {
-    return (str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    return (str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
 
   function copyToClipboard(text) {
@@ -597,6 +629,8 @@
       toast("🌞 First practice today! +3 ⭐");
     }
 
+    checkDailyGoal(activity);
+
     if (activity.answers % 10 === 0) flushActivity();
 
     return { starsAwarded, medalUp };
@@ -644,7 +678,7 @@
       const btn = document.createElement("button");
       btn.className = "profile-card";
       const gradeLine = p.grade ? `<br><span style="font-weight:400;font-size:.75rem;color:var(--muted)">Grade ${escapeAttr(p.grade)}</span>` : "";
-      btn.innerHTML = `<span class="avatar">${avatarFor(p)}</span>${escapeAttr(p.name)}${gradeLine}`;
+      btn.innerHTML = `<span class="avatar">${avatarHtml(p)}</span>${escapeAttr(p.name)}${gradeLine}`;
       btn.addEventListener("click", () => selectProfile(p.id));
       wrap.appendChild(btn);
     });
@@ -763,6 +797,12 @@
    * PARENT PROFILES (role:"parent" — child-proofing PIN, not security;
    * see spec §6. No grade/stars/streak/progress for these profiles.)
    * ------------------------------------------------------------------- */
+  // Reachable pre-login (no profile picked yet), so it can't rely on
+  // renderHome()/renderProfiles() state — it just shows/hides its own screen
+  // and always returns to the profile picker, the only place it's linked from.
+  document.getElementById("btn-open-legal").addEventListener("click", () => showScreen("legal"));
+  document.getElementById("btn-legal-back").addEventListener("click", () => showScreen("profiles"));
+
   document.getElementById("btn-show-add-parent").addEventListener("click", () => {
     document.getElementById("add-parent-form").classList.remove("hidden");
     document.getElementById("add-parent-hint").classList.remove("hidden");
@@ -891,6 +931,24 @@
     return { student, week, progress, dates, activityByDate };
   }
 
+  // Every study mode already calls recordModeStart() and its answers land in
+  // activity.modes — the data was always there. What was missing was showing
+  // it: the dashboard's only prominent activity section was "Recent tests"
+  // (Test Mode/Speed Quiz only, via student.recentTests), with every other
+  // mode's usage buried in one "· mostly spelling" fragment on a summary
+  // line. A parent whose kid did Spelling Practice or Word Scramble — the
+  // two modes these particular kids actually prefer — would see nothing that
+  // looked like practice happened. This breakdown makes every mode visible.
+  const MODE_LABELS = {
+    flashcard: "🔊 Look & Say",
+    spelling: "✏️ Spelling Practice",
+    vocab: "💡 Vocab Practice",
+    test: "🎯 Test Mode",
+    speed: "⚡ Speed Quiz",
+    scramble: "🔤 Word Scramble",
+    review: "🧠 Smart Review",
+  };
+
   function renderStudentCard(data) {
     const { student, week, progress, dates, activityByDate } = data;
     const today = todayLocalStr();
@@ -905,8 +963,9 @@
       Object.entries(a.modes || {}).forEach(([mode, n]) => { modeTotals[mode] = (modeTotals[mode] || 0) + n; });
     });
     const weekAccuracy = weekAnswers ? Math.round((weekCorrect / weekAnswers) * 100) : null;
-    let mostUsedMode = null, mostUsedCount = 0;
-    Object.entries(modeTotals).forEach(([mode, n]) => { if (n > mostUsedCount) { mostUsedMode = mode; mostUsedCount = n; } });
+    const modeBreakdown = Object.entries(modeTotals)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1]);
 
     const dotsHtml = dates.map((d) => {
       const filled = activityByDate[d] && activityByDate[d].answers > 0;
@@ -933,10 +992,18 @@
       ? recentTests.map((t) => `<div class="psc-tests-row"><span>${escapeAttr(t.date)} · ${t.kind === "spelling" ? "Spelling" : "Vocab"}</span><span class="${pctClass(t.pct)}">${t.pct}%</span></div>`).join("")
       : `<p class="psc-empty">No tests taken yet.</p>`;
 
+    // Counts sessions (recordModeStart calls), not answers — "used Word
+    // Scramble 3 times" is the honest claim this data supports. Answer-level
+    // counts stay in the accuracy line above, where they're paired with the
+    // week's actual correct/attempted totals rather than presented alone.
+    const modeHtml = modeBreakdown.length
+      ? modeBreakdown.map(([mode, n]) => `<div class="psc-tests-row"><span>${MODE_LABELS[mode] || escapeAttr(mode)}</span><span>${n}×</span></div>`).join("")
+      : `<p class="psc-empty">No practice sessions yet this week.</p>`;
+
     return `
       <div class="parent-student-card">
         <div class="psc-identity">
-          <span class="avatar">${avatarFor(student)}</span>
+          <span class="avatar">${avatarHtml(student)}</span>
           <div>
             <div class="psc-name">${escapeAttr(student.name)}</div>
             <div class="psc-meta">${student.grade ? "Grade " + escapeAttr(student.grade) : "No grade set"}</div>
@@ -949,7 +1016,10 @@
 
         <p class="psc-usage-line">Last practiced: <strong>${relativeDateLabel(student.lastActiveDate)}</strong></p>
         <div class="psc-dots">${dotsHtml}</div>
-        <p class="psc-usage-line">${weekAnswers} answers this week${weekAccuracy !== null ? " · " + weekAccuracy + "% accuracy" : ""}${mostUsedMode ? " · mostly " + mostUsedMode : ""}</p>
+        <p class="psc-usage-line">${weekAnswers} answers this week${weekAccuracy !== null ? " · " + weekAccuracy + "% accuracy" : ""}</p>
+
+        <p class="psc-section-title">This week's practice</p>
+        <div>${modeHtml}</div>
 
         <p class="psc-section-title">${week ? escapeAttr(week.label) : "No word list"}</p>
         ${week ? `<p class="psc-usage-line">🥇 ${medalCounts.gold} · 🥈 ${medalCounts.silver} · 🥉 ${medalCounts.bronze} · ⚪ ${medalCounts.none}</p>` : ""}
@@ -1001,8 +1071,42 @@
    * CATALOG (shared word lists, organized by grade + week)
    * ------------------------------------------------------------------- */
 
+  // Catalog weeks are SHARED, cross-household-writable content: anyone holding
+  // the catalog code can write `catalogs/{code}/weeks/{id}` directly, so week
+  // docs are untrusted input arriving from a different user, not our own data.
+  // A malformed doc (missing `words`, `words` not an array, junk types) must
+  // degrade to "skipped" here at the boundary rather than throw a TypeError
+  // deep inside a render path and take down week selection for everyone
+  // sharing that catalog. Returns null for a week that can't be salvaged.
+  function sanitizeWeek(week) {
+    if (!week || typeof week !== "object") return null;
+    if (typeof week.id !== "string" || !week.id) return null;
+    const rawWords = Array.isArray(week.words) ? week.words : [];
+    return {
+      id: week.id,
+      grade: typeof week.grade === "string" ? week.grade : "",
+      weekNumber: typeof week.weekNumber === "number" ? week.weekNumber : 0,
+      // Anything not a real local-calendar date string is dropped rather than
+      // kept, because weekStartDate is compared as a string in
+      // computeAutoWeek() — junk would silently reorder the school year
+      // instead of failing loudly.
+      weekStartDate: /^\d{4}-\d{2}-\d{2}$/.test(week.weekStartDate) ? week.weekStartDate : "",
+      label: typeof week.label === "string" ? week.label : week.id,
+      words: rawWords
+        .filter((w) => w && typeof w === "object" && typeof w.id === "string" && w.id && typeof w.text === "string" && w.text)
+        .map((w) => ({ id: w.id, text: w.text, definition: typeof w.definition === "string" ? w.definition : "" })),
+    };
+  }
+
+  function sanitizeWeeks(list) {
+    return (Array.isArray(list) ? list : []).map(sanitizeWeek).filter(Boolean);
+  }
+
   function computeAutoWeek(weeks, grade) {
-    const gradeWeeks = weeks.filter((w) => w.grade === grade).sort((a, b) => (a.weekStartDate < b.weekStartDate ? -1 : 1));
+    // A week whose start date failed sanitization is excluded from automatic
+    // selection — it stays reachable via the manual week picker, but must not
+    // win the "nearest past start date" race by virtue of being an empty string.
+    const gradeWeeks = weeks.filter((w) => w.grade === grade && w.weekStartDate).sort((a, b) => (a.weekStartDate < b.weekStartDate ? -1 : 1));
     if (!gradeWeeks.length) return null;
     const today = todayLocalStr();
     let chosen = gradeWeeks[0];
@@ -1019,17 +1123,23 @@
       try { progress = await Sync.fetchProgress(profileId, week.id); } catch (e) { /* ignore */ }
     }
     const freshStat = () => ({ spelling: { correct: 0, attempts: 0 }, vocab: { known: 0, attempts: 0 } });
+    // Both sides are untrusted: `week` may be a poisoned shared-catalog doc,
+    // and `progress` may be a corrupt localStorage entry or a doc written by
+    // another device in this household. Neither may be assumed to have a
+    // usable `words` array.
+    const catalogWords = Array.isArray(week.words) ? week.words : [];
     if (!progress) {
       progress = {
         weekId: week.id,
         grade: week.grade,
         label: week.label,
-        words: week.words.map((w) => Object.assign({ id: w.id, text: w.text, definition: w.definition }, freshStat())),
+        words: catalogWords.map((w) => Object.assign({ id: w.id, text: w.text, definition: w.definition || "" }, freshStat())),
       };
     } else {
       // Reconcile in case the catalog's word list changed since last practiced.
-      const existingById = new Map(progress.words.map((w) => [w.id, w]));
-      progress.words = week.words.map((w) => existingById.get(w.id) || Object.assign({ id: w.id, text: w.text, definition: w.definition }, freshStat()));
+      const priorWords = Array.isArray(progress.words) ? progress.words : [];
+      const existingById = new Map(priorWords.filter((w) => w && w.id).map((w) => [w.id, w]));
+      progress.words = catalogWords.map((w) => existingById.get(w.id) || Object.assign({ id: w.id, text: w.text, definition: w.definition || "" }, freshStat()));
       progress.label = week.label;
       progress.grade = week.grade;
     }
@@ -1067,10 +1177,10 @@
       }
     }
 
-    state.catalogWeeks = load(catalogWeeksKey(code), []);
+    state.catalogWeeks = sanitizeWeeks(load(catalogWeeksKey(code), []));
     if (firestoreReady()) {
       try {
-        const remote = await Sync.fetchCatalogWeeks(code);
+        const remote = sanitizeWeeks(await Sync.fetchCatalogWeeks(code));
         if (remote.length) { state.catalogWeeks = remote; save(catalogWeeksKey(code), remote); }
       } catch (e) { /* fall back to local cache */ }
     }
@@ -1114,7 +1224,9 @@
       toast("Connected! Catalog code: " + code);
       await loadCatalogAndWeek();
     } catch (e) {
-      toast("Couldn't connect — check your internet and try again.");
+      toast(e && e.message === "Invalid catalog code"
+        ? "That catalog code has characters that aren't allowed — try letters, numbers, spaces, or dashes."
+        : "Couldn't connect — check your internet and try again.");
     } finally {
       btn.disabled = false;
     }
@@ -1131,12 +1243,17 @@
     function flushBlock() {
       if (block.length === 0) return;
       weekNum++;
+      // Length caps are pure hardening, not a UX limit — no real spelling
+      // word or definition comes close to 200 characters. Bounds how much a
+      // single hostile line in a shared catalog paste can bloat the shared
+      // Firestore document before its 1MiB cap kicks in anyway, so a bad
+      // paste degrades that one word instead of failing the whole save.
       const words = block
         .map((line) => {
           const idx = line.indexOf(",");
           const wtext = idx === -1 ? line : line.slice(0, idx);
           const definition = idx === -1 ? "" : line.slice(idx + 1).trim();
-          return { id: uid(), text: wtext.trim(), definition };
+          return { id: uid(), text: wtext.trim().slice(0, 200), definition: definition.slice(0, 500) };
         })
         .filter((w) => w.text);
       if (words.length && currentGrade) {
@@ -1191,10 +1308,15 @@
 
     // Ownership is a soft guardrail (same posture as household/catalog
     // codes themselves), not a hard permission — it just keeps someone from
-    // *accidentally* overwriting another household's shared word list. A
-    // catalog with no ownerHousehold on record (e.g. the real zoelive
-    // catalog, created before this existed) stays editable by everyone, so
-    // nothing already live gets locked out.
+    // *accidentally* overwriting another household's shared word list.
+    //
+    // Compared via opaque ownerToken, never the household code: a catalog doc
+    // is readable by every household the catalog code is shared with, so the
+    // code itself must never appear on it (see connectCatalog in sync.js).
+    // Legacy catalogs carrying the old plaintext `ownerHousehold` field, and
+    // catalogs with no owner recorded at all (e.g. the real zoelive catalog,
+    // created before either existed), stay editable by everyone — failing
+    // open keeps anything already live from being locked out.
     const note = document.getElementById("catalog-readonly-note");
     const form = document.getElementById("catalog-editor-form");
     note.classList.add("hidden");
@@ -1202,8 +1324,9 @@
     if (code !== LOCAL_CATALOG && firestoreReady()) {
       try {
         const meta = await Sync.fetchCatalogMeta(code);
-        const owner = meta && meta.ownerHousehold;
-        if (owner && owner !== Sync.getHouseholdCode()) {
+        const owner = meta && meta.ownerToken;
+        const mine = await Sync.ensureOwnerToken();
+        if (owner && mine && owner !== mine) {
           note.textContent = "This catalog is managed by another household — you can use it, but only they can add or change words. Ask them to add new weeks, or connect a different catalog.";
           note.classList.remove("hidden");
           form.classList.add("hidden");
@@ -1246,7 +1369,15 @@
     try {
       if (firestoreReady()) await Sync.saveCatalogWeeks(code, catalogParsePreview);
       const key = catalogWeeksKey(code);
-      const merged = mergeWeeks(load(key, []), catalogParsePreview);
+      // sanitizeWeeks() here is belt-and-suspenders, not a fix for a known
+      // gap: catalogParsePreview already satisfies its invariants since
+      // parseCatalogText() built it. It's applied anyway for parity with
+      // ensureCatalogLoaded() — every OTHER path that sets state.catalogWeeks
+      // goes through it, and a future change to the parser silently losing
+      // that guarantee should degrade gracefully here too, not reopen the
+      // "poisoned catalog crashes other households" bug sanitizeWeek() exists
+      // to prevent (see docs/HANDOFF.md).
+      const merged = sanitizeWeeks(mergeWeeks(load(key, []), catalogParsePreview));
       save(key, merged);
       state.catalogWeeks = merged;
       toast(`Saved ${catalogParsePreview.length} week${catalogParsePreview.length === 1 ? "" : "s"}!`);
@@ -1259,6 +1390,274 @@
     } finally {
       btn.disabled = false;
     }
+  });
+
+  /* ---------------------------------------------------------------------
+   * STARTER WORD LISTS
+   * The app's single biggest adoption blocker was that a brand new family
+   * opens it to "No word list yet" and cannot do anything at all until
+   * someone types out a full week of words. These bundled packs
+   * (js/starter-lists.js) make it two taps to a usable app.
+   * ------------------------------------------------------------------- */
+  function mondayOfThisWeek() {
+    return weekDatesMonToSun(todayLocalStr())[0];
+  }
+
+  function starterPackWordCount(pack) {
+    return pack.weeks.reduce((n, w) => n + w.vocab.length + w.spelling.length, 0);
+  }
+
+  function openStarterLists() {
+    const wrap = document.getElementById("starter-list-grid");
+    wrap.innerHTML = "";
+    StarterLists.PACKS.forEach((pack) => {
+      const card = document.createElement("div");
+      card.className = "starter-card";
+      card.innerHTML =
+        `<div class="starter-card-title">${escapeAttr(pack.label)}</div>` +
+        `<div class="starter-card-desc">${escapeAttr(pack.description)}</div>` +
+        `<div class="starter-card-meta">${pack.weeks.length} weeks · ${starterPackWordCount(pack)} words</div>`;
+      const btn = document.createElement("button");
+      btn.className = "btn btn-primary starter-card-btn";
+      btn.textContent = "Add to My Lists";
+      btn.addEventListener("click", () => importStarterPack(pack, btn));
+      card.appendChild(btn);
+      wrap.appendChild(card);
+    });
+    showScreen("starter-lists");
+  }
+
+  // Deliberately mirrors the paste-import save path (btn-save-catalog) rather
+  // than inventing a second one: same mergeWeeks, same local+Firestore write,
+  // same loadCatalogAndWeek refresh — so a starter pack behaves exactly like
+  // a pasted list once imported and there's only one code path to reason
+  // about when catalog writes go wrong.
+  async function importStarterPack(pack, btn) {
+    const weeks = StarterLists.toWeeks(pack.grade, mondayOfThisWeek(), dateToLocalStr);
+    if (!weeks.length) { toast("That starter list is empty."); return; }
+    btn.disabled = true;
+    try {
+      const code = getCatalogCode();
+      if (firestoreReady()) await Sync.saveCatalogWeeks(code, weeks);
+      const key = catalogWeeksKey(code);
+      const merged = sanitizeWeeks(mergeWeeks(load(key, []), weeks));
+      save(key, merged);
+      state.catalogWeeks = merged;
+      // A student profile with no grade set yet would otherwise import words
+      // and still land on "No word list yet", since computeAutoWeek() filters
+      // by grade — adopt the pack's grade so the import visibly works.
+      if (state.profile && state.profile.role !== "parent" && !state.profile.grade) {
+        state.profile.grade = pack.grade;
+        persistProfile();
+      }
+      toast(`Added ${weeks.length} weeks of ${pack.label}! 🎉`);
+      celebrate("small");
+      if (state.profile) await loadCatalogAndWeek();
+      renderHome();
+      showScreen("home");
+    } catch (e) {
+      toast("Couldn't add that list — check your internet and try again.");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById("starter-lists-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
+  document.getElementById("btn-home-starter-lists").addEventListener("click", openStarterLists);
+  document.getElementById("btn-starter-lists-from-catalog").addEventListener("click", openStarterLists);
+
+  /* ---------------------------------------------------------------------
+   * DAILY GOAL
+   * A visible, resettable target for "am I done for today?" — the streak
+   * system rewards showing up at all, this rewards actually finishing a
+   * useful amount. Counts answers, which every study mode already reports
+   * through recordAnswer(), so no mode needs to know this exists.
+   * ------------------------------------------------------------------- */
+  const DAILY_GOAL_ANSWERS = 20;
+  const DAILY_GOAL_BONUS = 5;
+
+  function renderDailyGoal() {
+    const el = document.getElementById("home-daily-goal");
+    if (!state.profile || state.profile.role === "parent") { el.classList.add("hidden"); return; }
+    const a = getOrInitActivity();
+    if (!a) { el.classList.add("hidden"); return; }
+    const done = Math.min(a.answers || 0, DAILY_GOAL_ANSWERS);
+    const pct = Math.round((done / DAILY_GOAL_ANSWERS) * 100);
+    const met = (a.answers || 0) >= DAILY_GOAL_ANSWERS;
+    document.getElementById("daily-goal-label").textContent = met ? "🎉 Goal complete!" : "Today's Goal";
+    document.getElementById("daily-goal-count").textContent = `${done} / ${DAILY_GOAL_ANSWERS}`;
+    const fill = document.getElementById("daily-goal-fill");
+    fill.style.width = pct + "%";
+    fill.classList.toggle("met", met);
+    el.classList.remove("hidden");
+  }
+
+  // Called from recordAnswer, so it fires the moment the goal is crossed
+  // mid-session rather than only when the kid returns to Home. `goalAwarded`
+  // is persisted on the activity doc (not just held in memory) so reloading
+  // the page or practicing on a second device can't re-award the bonus.
+  function checkDailyGoal(activity) {
+    if (!activity || activity.goalAwarded) return;
+    if ((activity.answers || 0) < DAILY_GOAL_ANSWERS) return;
+    activity.goalAwarded = true;
+    addStars(DAILY_GOAL_BONUS);
+    activity.starsEarned = (activity.starsEarned || 0) + DAILY_GOAL_BONUS;
+    toast(`🎯 Daily goal reached! +${DAILY_GOAL_BONUS} ⭐`);
+    celebrate("big");
+    playSound("medal");
+    flushActivity();
+  }
+
+  /* ---------------------------------------------------------------------
+   * SMART REVIEW
+   * Every other mode studies exactly one week. This one pulls the words the
+   * student is actually weakest on out of EVERY week they have ever
+   * practiced, so old material doesn't silently rot once the class moves on.
+   *
+   * The important structural difference: a review word belongs to another
+   * week's progress doc, so stats must be written back to that word's own
+   * doc, not to state.progress (which still points at the currently selected
+   * week and must not be corrupted by review answers). reviewSession.docs
+   * holds every touched doc by weekId and saves each one individually.
+   * ------------------------------------------------------------------- */
+  const REVIEW_MAX_WORDS = 15;
+  let reviewSession = { queue: [], index: 0, streak: 0, docs: new Map() };
+
+  // Loads every progress doc this profile has, keyed by weekId. Local only
+  // on purpose: the progress index is written on every save, so anything
+  // this device practiced is here, and a cross-device gap just means a
+  // slightly smaller review pool rather than a wrong one.
+  function loadAllProgressDocs(profileId) {
+    const docs = new Map();
+    load(progressIndexKey(profileId), []).forEach((weekId) => {
+      const doc = load(progressKey(profileId, weekId), null);
+      if (doc && Array.isArray(doc.words)) docs.set(weekId, doc);
+    });
+    return docs;
+  }
+
+  // Weakest-first: unmastered medals before mastered ones, then genuinely
+  // low accuracy, then never-practiced. Never-practiced words sort as 0.5 so
+  // they land behind demonstrated weaknesses but ahead of words the student
+  // is merely okay at — reviewing a word you got 80% right is less valuable
+  // than one you have never attempted, which in turn is less urgent than one
+  // you keep getting wrong.
+  function buildReviewQueue(profileId) {
+    const docs = loadAllProgressDocs(profileId);
+    const candidates = [];
+    docs.forEach((doc, weekId) => {
+      doc.words.forEach((w) => {
+        // A progress doc written by an older build (or hand-edited/corrupted
+        // localStorage) may lack the stat sub-objects wordMedal() indexes
+        // into. Skip rather than throw — one bad word must not take down the
+        // whole review queue, and this runs on every renderHome().
+        if (!w || !w.spelling || !w.vocab) return;
+        if (wordMedal(w) === "gold") return;
+        const acc = wordAccuracy(w);
+        candidates.push({
+          word: w,
+          weekId,
+          weekLabel: doc.label || "",
+          rank: MEDAL_RANK[wordMedal(w)],
+          score: acc === null ? 0.5 : acc,
+        });
+      });
+    });
+    candidates.sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : a.score - b.score));
+    return { queue: candidates.slice(0, REVIEW_MAX_WORDS), docs };
+  }
+
+  function reviewAvailableCount(profileId) {
+    return buildReviewQueue(profileId).queue.length;
+  }
+
+  function openReview() {
+    const { queue, docs } = buildReviewQueue(state.profile.id);
+    if (!queue.length) {
+      toast("Nothing to review yet — practice a week first!");
+      return;
+    }
+    reviewSession = { queue: shuffle(queue), index: 0, streak: 0, docs };
+    document.getElementById("review-streak").classList.add("hidden");
+    recordModeStart("review");
+    renderReview();
+    showScreen("review");
+  }
+
+  function renderReview() {
+    const item = reviewSession.queue[reviewSession.index];
+    document.getElementById("review-progress").textContent = `Word ${reviewSession.index + 1} of ${reviewSession.queue.length}`;
+    document.getElementById("review-origin").textContent = item.weekLabel ? "from " + item.weekLabel : "";
+    document.getElementById("review-input").value = "";
+    document.getElementById("review-input").disabled = false;
+    document.getElementById("review-feedback").classList.add("hidden");
+    document.getElementById("review-continue").classList.add("hidden");
+    document.getElementById("review-submit").classList.remove("hidden");
+    speak(item.word.text);
+    document.getElementById("review-input").focus();
+  }
+
+  attachMic(document.getElementById("review-mic"), document.getElementById("review-input"));
+  document.getElementById("review-hear").addEventListener("click", () => {
+    speak(reviewSession.queue[reviewSession.index].word.text);
+  });
+
+  function saveReviewDoc(weekId) {
+    const doc = reviewSession.docs.get(weekId);
+    if (!doc) return;
+    saveProgress(state.profile.id, weekId, doc);
+    // The reviewed word may belong to the week that is currently open on
+    // Home. Its object identity is different (loaded from storage separately),
+    // so refresh state.progress from the just-saved doc to keep Home's medal
+    // counts honest instead of showing pre-review numbers.
+    if (state.progress && state.progress.weekId === weekId) state.progress = doc;
+  }
+
+  document.getElementById("review-submit").addEventListener("click", () => {
+    const item = reviewSession.queue[reviewSession.index];
+    const answer = document.getElementById("review-input").value.trim();
+    const correct = answer.toLowerCase() === item.word.text.trim().toLowerCase();
+    recordAnswer(item.word, correct, "spelling");
+    const feedback = document.getElementById("review-feedback");
+    if (correct) {
+      reviewSession.streak++;
+      feedback.className = "feedback correct";
+      feedback.textContent = "✅ Correct! Nice work.";
+    } else {
+      reviewSession.streak = 0;
+      feedback.className = "feedback incorrect";
+      feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(item.word.text)}</span>`;
+    }
+    updateStreakBadge(document.getElementById("review-streak"), reviewSession.streak);
+    feedback.classList.remove("hidden");
+    document.getElementById("review-input").disabled = true;
+    document.getElementById("review-submit").classList.add("hidden");
+    document.getElementById("review-continue").classList.remove("hidden");
+    saveReviewDoc(item.weekId);
+  });
+
+  document.getElementById("review-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !document.getElementById("review-submit").classList.contains("hidden")) {
+      document.getElementById("review-submit").click();
+    }
+  });
+
+  document.getElementById("review-continue").addEventListener("click", () => {
+    reviewSession.index++;
+    if (reviewSession.index >= reviewSession.queue.length) {
+      toast("Review complete! 🧠");
+      flushActivity();
+      renderHome();
+      showScreen("home");
+    } else {
+      renderReview();
+    }
+  });
+
+  document.getElementById("review-exit").addEventListener("click", () => {
+    flushActivity();
+    renderHome();
+    showScreen("home");
   });
 
   /* ---------------------------------------------------------------------
@@ -1325,13 +1724,18 @@
 
   function renderHome() {
     const summary = document.getElementById("home-medal-summary");
+    const starterBtn = document.getElementById("btn-home-starter-lists");
+    renderReviewBadge();
     if (!state.selectedWeek || !state.progress) {
       document.getElementById("home-week-label").textContent = "No word list yet";
-      document.getElementById("home-word-count").textContent = "Add words from Manage Word Catalog to get started";
+      document.getElementById("home-word-count").textContent = "Load a ready-made list to start practicing right now.";
       summary.classList.add("hidden");
       document.getElementById("home-streak-banner").classList.add("hidden");
+      document.getElementById("home-daily-goal").classList.add("hidden");
+      starterBtn.classList.remove("hidden");
       return;
     }
+    starterBtn.classList.add("hidden");
     document.getElementById("home-week-label").textContent = state.selectedWeek.label;
     const n = state.progress.words.length;
     document.getElementById("home-word-count").textContent = n === 1 ? "1 word" : n + " words";
@@ -1349,15 +1753,31 @@
     }
 
     renderStreakBanner();
+    renderDailyGoal();
+  }
+
+  // Smart Review works off past weeks, so it stays available (and shows how
+  // many words are waiting) even when the current week is empty.
+  function renderReviewBadge() {
+    const badge = document.getElementById("review-count-badge");
+    if (!badge) return;
+    if (!state.profile || state.profile.role === "parent") { badge.classList.add("hidden"); return; }
+    const n = reviewAvailableCount(state.profile.id);
+    if (n > 0) {
+      badge.textContent = n;
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
+    }
   }
 
   document.querySelectorAll(".menu-card[data-nav]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const target = btn.getAttribute("data-nav");
-      const noWordListNeeded = target === "progress" || target === "shop";
+      const noWordListNeeded = target === "progress" || target === "shop" || target === "review";
       if (!noWordListNeeded && (!state.progress || state.progress.words.length === 0)) {
-        toast("Add some words to the catalog first!");
-        openCatalogEditor();
+        toast("Add some words first — try a starter list!");
+        openStarterLists();
         return;
       }
       if (target === "flashcard") openFlashcard();
@@ -1366,6 +1786,7 @@
       else if (target === "test-setup") showScreen("test-setup");
       else if (target === "speed-setup") showScreen("speed-setup");
       else if (target === "scramble") openScramble();
+      else if (target === "review") openReview();
       else if (target === "progress") openProgress();
       else if (target === "shop") openShop();
     });
@@ -2063,9 +2484,86 @@
     return (profile.unlocks || []).includes(unlockId);
   }
 
+  // Which characters are active in the Star Shop and what they cost is a
+  // parent-controlled, household-wide setting (see Manage Avatars below) —
+  // deliberately separate from any one kid's profile so every profile in
+  // the household sees the same storefront. ShopCatalog.CHARACTERS carries
+  // only the defaults; this is the override layer on top of it.
+  const SHOP_CONFIG_KEY = "ws_shop_config";
+
+  function getShopConfigOverrides() {
+    return load(SHOP_CONFIG_KEY, {});
+  }
+
+  function saveShopConfigOverrides(overrides) {
+    save(SHOP_CONFIG_KEY, overrides);
+    if (firestoreReady()) {
+      Sync.saveShopConfig(overrides).catch((err) => {
+        // The local write already succeeded and the checkbox already moved, so
+        // failing silently here would leave the parent believing a store change
+        // synced to the kids' devices when it never left this one.
+        console.warn("[word-study] shop config sync failed", err);
+        toast("Saved on this device — couldn't sync to other devices.");
+      });
+    }
+  }
+
+  // `active` and `price` fall back to the catalog default independently —
+  // setting a custom price doesn't require also deciding active, and a
+  // parent flipping active off and back on later doesn't lose a custom price.
+  // The override blob is NOT trustworthy input, even though a parent is the
+  // only one meant to write it: it round-trips through Firestore, where any
+  // household member can write it directly with the SDK, bypassing the Manage
+  // Avatars UI (and therefore its own Math.max(0, ...) clamp). A *negative*
+  // price passes a bare `typeof === "number"` check and then turns
+  // `p.stars -= price` in buyItem() into a star grant — so the range check
+  // here is the load-bearing one, not the clamp in the UI.
+  function sanitizePrice(value, fallback) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return fallback;
+    return Math.floor(value);
+  }
+
+  function effectiveCharacter(item) {
+    const o = getShopConfigOverrides()[item.id] || {};
+    return Object.assign({}, item, {
+      price: sanitizePrice(o.price, item.defaultPrice),
+      active: typeof o.active === "boolean" ? o.active : item.defaultActive,
+    });
+  }
+
+  function effectiveCharacters() {
+    return ShopCatalog.CHARACTERS.map(effectiveCharacter);
+  }
+
+  function setCharacterOverride(id, patch) {
+    const overrides = getShopConfigOverrides();
+    overrides[id] = Object.assign({}, overrides[id], patch);
+    saveShopConfigOverrides(overrides);
+  }
+
+  // Pulls the parent's latest config down from Firestore into the local
+  // override cache, so a change made on the parent's device shows up here
+  // the next time this device opens the shop or the dashboard. A plain
+  // overwrite of a config cache, not live session state, so — unlike profile
+  // sync — there's no mid-session/self-echo hazard to guard against here.
+  async function refreshShopConfigFromCloud() {
+    if (!firestoreReady()) return;
+    try {
+      const remote = await Sync.fetchShopConfig();
+      if (remote) save(SHOP_CONFIG_KEY, remote);
+    } catch (e) { /* ignore */ }
+  }
+
   function openShop() {
     renderShop();
     showScreen("shop");
+    // Render immediately from whatever's cached, then refresh from the
+    // cloud and re-render if the parent changed something on another
+    // device — same "render local-first, reconcile after" shape as the
+    // rest of the app.
+    refreshShopConfigFromCloud().then(() => {
+      if (document.getElementById("screen-shop").classList.contains("active")) renderShop();
+    });
   }
 
   // Renders one item card in one of four states: equipped (disabled, ring),
@@ -2097,20 +2595,47 @@
     wrap.appendChild(btn);
   }
 
+  function renderCharacterCard(wrap, item) {
+    const p = state.profile;
+    const owned = item.price === 0 || isUnlocked(p, "char:" + item.id);
+    renderShopItem(wrap, {
+      html: `<span class="shop-item-char"><img src="assets/avatars/${item.id}.webp" alt="${escapeAttr(item.label)}"></span>` +
+            `<span class="shop-item-label">${escapeAttr(item.label)}</span>`,
+      legendary: item.tier === "chase",
+      owned,
+      equipped: avatarFor(p) === avatarValue(item),
+      price: item.price,
+      onEquip: () => equipAvatar(item),
+      onBuy: () => buyItem("char", item),
+    });
+  }
+
   function renderShop() {
     const p = state.profile;
     document.getElementById("shop-lifetime").textContent = `All-time: ${p.lifetimeStars || 0} ⭐`;
+
+    const active = effectiveCharacters().filter((c) => c.active);
+    const chaseItems = active.filter((c) => c.tier === "chase");
+    const standardItems = active.filter((c) => c.tier !== "chase");
+
+    document.getElementById("shop-chase-section").classList.toggle("hidden", chaseItems.length === 0);
+    const chaseWrap = document.getElementById("shop-chase");
+    chaseWrap.innerHTML = "";
+    chaseItems.forEach((item) => renderCharacterCard(chaseWrap, item));
+
+    const charWrap = document.getElementById("shop-characters");
+    charWrap.innerHTML = "";
+    standardItems.forEach((item) => renderCharacterCard(charWrap, item));
 
     const avatarWrap = document.getElementById("shop-avatars");
     avatarWrap.innerHTML = "";
     ShopCatalog.AVATARS.forEach((item) => {
       const owned = item.price === 0 || isUnlocked(p, "avatar:" + item.id);
-      const equipped = (p.equippedAvatar || p.avatar) === item.emoji;
       renderShopItem(avatarWrap, {
         html: `<span class="shop-item-emoji">${item.emoji}</span>`,
         legendary: item.legendary,
         owned,
-        equipped,
+        equipped: avatarFor(p) === avatarValue(item),
         price: item.price,
         onEquip: () => equipAvatar(item),
         onBuy: () => buyItem("avatar", item),
@@ -2140,12 +2665,25 @@
     });
   }
 
+  // What actually gets stored in `equippedAvatar`: emoji items store the emoji
+  // character itself (unchanged from the original shop, so existing profiles
+  // need no migration), character items store "char:<id>".
+  function avatarValue(item) {
+    return item.emoji || "char:" + item.id;
+  }
+
+  // Emoji and character avatars live in separate unlock namespaces so an id
+  // reused across the two catalogs can never gift the other one for free.
+  function unlockIdFor(item) {
+    return (item.emoji ? "avatar:" : "char:") + item.id;
+  }
+
   function equipAvatar(item) {
     const p = state.profile;
-    const unlockId = "avatar:" + item.id;
-    if (item.price > 0 && !isUnlocked(p, unlockId)) return;
-    if ((p.equippedAvatar || p.avatar) === item.emoji) return;
-    p.equippedAvatar = item.emoji;
+    if (item.price > 0 && !isUnlocked(p, unlockIdFor(item))) return;
+    const value = avatarValue(item);
+    if (avatarFor(p) === value) return;
+    p.equippedAvatar = value;
     persistProfile();
     refreshHeader();
     renderShop();
@@ -2169,13 +2707,16 @@
     const p = state.profile;
     const unlockId = kind + ":" + item.id;
     if (isUnlocked(p, unlockId)) return;
-    if ((p.stars || 0) < item.price) return;
+    // Second line of defence behind sanitizePrice(): a spend must never be
+    // able to *increase* the balance, whatever the caller handed us.
+    const price = sanitizePrice(item.price, 0);
+    if ((p.stars || 0) < price) return;
     const label = kind === "avatar" ? item.emoji : item.label;
-    if (!confirm(`Buy ${label} for ${item.price} ⭐?`)) return;
-    p.stars -= item.price;
+    if (!confirm(`Buy ${label} for ${price} ⭐?`)) return;
+    p.stars -= price;
     p.unlocks = p.unlocks || [];
     p.unlocks.push(unlockId);
-    if (kind === "avatar") p.equippedAvatar = item.emoji;
+    if (kind === "avatar" || kind === "char") p.equippedAvatar = avatarValue(item);
     else p.equippedTheme = item.id;
     persistProfile();
     refreshHeader();
@@ -2187,6 +2728,58 @@
   }
 
   document.getElementById("shop-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
+
+  /* ---------------------------------------------------------------------
+   * MANAGE AVATARS (parent-only — which characters are in the Star Shop
+   * right now, and what they cost). Reached only from the Parent Dashboard,
+   * so it inherits that screen's PIN gate rather than needing its own.
+   * ------------------------------------------------------------------- */
+  function renderManageAvatarCard(item) {
+    const card = document.createElement("div");
+    card.className = "manage-avatar-card" + (item.tier === "chase" ? " chase" : "");
+    card.innerHTML = `
+      <span class="manage-avatar-thumb"><img src="assets/avatars/${item.id}.webp" alt="${escapeAttr(item.label)}"></span>
+      <span class="manage-avatar-label">${escapeAttr(item.label)}</span>
+      <label class="manage-avatar-active">
+        <input type="checkbox"${item.active ? " checked" : ""}> In Store
+      </label>
+      <label class="manage-avatar-price">
+        <input type="number" min="0" step="5" value="${item.price}" inputmode="numeric"> ⭐
+      </label>`;
+    const checkbox = card.querySelector('input[type="checkbox"]');
+    const priceInput = card.querySelector('input[type="number"]');
+    checkbox.addEventListener("change", () => {
+      setCharacterOverride(item.id, { active: checkbox.checked });
+    });
+    priceInput.addEventListener("change", () => {
+      const v = Math.max(0, parseInt(priceInput.value, 10) || 0);
+      priceInput.value = v;
+      setCharacterOverride(item.id, { price: v });
+    });
+    return card;
+  }
+
+  function renderManageAvatars() {
+    const chaseWrap = document.getElementById("manage-chase");
+    const stdWrap = document.getElementById("manage-standard");
+    chaseWrap.innerHTML = "";
+    stdWrap.innerHTML = "";
+    effectiveCharacters().forEach((item) => {
+      const card = renderManageAvatarCard(item);
+      (item.tier === "chase" ? chaseWrap : stdWrap).appendChild(card);
+    });
+  }
+
+  function openManageAvatars() {
+    renderManageAvatars();
+    showScreen("manage-avatars");
+    refreshShopConfigFromCloud().then(() => {
+      if (document.getElementById("screen-manage-avatars").classList.contains("active")) renderManageAvatars();
+    });
+  }
+
+  document.getElementById("parent-dash-manage-avatars").addEventListener("click", openManageAvatars);
+  document.getElementById("manage-avatars-exit").addEventListener("click", () => { openParentDashboard(); });
 
   /* ---------------------------------------------------------------------
    * HOUSEHOLD (cross-device sync) SCREEN

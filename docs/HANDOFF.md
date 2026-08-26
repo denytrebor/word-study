@@ -1,6 +1,6 @@
 # Word Study — Handoff Document
 
-_Last updated: 2026-08-25_
+_Last updated: 2026-08-26_
 
 A static PWA (no build step, no backend beyond Firebase) built for the user's kids
 to self-study their weekly spelling/vocab word lists. Live at
@@ -17,8 +17,9 @@ file is the current-state summary, that one is the incident/decision log.
 ## Architecture
 
 - Vanilla HTML/CSS/JS, no framework, no bundler. `js/app.js` is the whole app
-  (state, screens, all 6 study modes, gamification). `js/sync.js` wraps
+  (state, screens, all 7 study modes, gamification). `js/sync.js` wraps
   Firebase. `js/shop-catalog.js` is static avatar/theme data.
+  `js/starter-lists.js` is bundled starter word-list content.
 - **Local-first**: everything works offline via `localStorage`. Firebase
   (Firestore + Anonymous Auth, project `spelling-words-671aa`, free Spark plan)
   is optional cross-device sync layered on top — the app runs fine if Firebase
@@ -55,15 +56,400 @@ practice scores.
 
 Look & Say (TTS flashcards) · Spelling Practice · Vocab Practice · Test Mode
 (one pass, max 2 replays, no feedback until the end) · Speed Quiz
-(parent-led swipeable flashcards) · Word Scramble (tile-drag spelling).
+(parent-led swipeable flashcards) · Word Scramble (tile-drag spelling) ·
+Smart Review (weakest words across every week practiced — see Usability
+features below; the only mode not scoped to a single week).
 
 ## Gamification (fully shipped per `docs/gamification-parent-mode-spec.md`)
 
 Word mastery medals (bronze/silver/gold, derived from stats, never stored) ·
-daily streaks + activity tracking · star shop (24 avatars, 6 themes) ·
-celebrations (confetti/chimes, mute toggle) · PIN-gated parent dashboard
-(read-only, local-storage-first with Firestore fallback). Explicit non-goals:
+daily streaks + activity tracking · star shop (72 illustrated characters
+across a standard and a "chase" tier, 24 emoji avatars, 6 themes), fully
+parent-configurable via Manage Avatars (see below) · celebrations
+(confetti/chimes, mute toggle) · PIN-gated parent dashboard (read-only,
+local-storage-first with Firestore fallback). Explicit non-goals:
 leaderboards, badges, weekly goals, teacher dashboard.
+
+## Character avatars (`assets/avatars/`)
+
+72 illustrated characters, sliced with **real per-pixel alpha transparency**
+(no background-removal guesswork — see `tools/slice-avatars.py`'s docstring)
+from three reference sheets the user supplied 2026-08-26, kept at
+`tools/reference-sheets/`. Running `python tools/slice-avatars.py` (needs
+pillow/numpy/scipy) regenerates the whole set and is the only way these files
+should be produced. WebP at q92, ~2.1 MB total, all precached by the service
+worker (`CHARACTER_AVATARS` in `service-worker.js` — keep in sync with
+`CHARACTERS` in `js/shop-catalog.js` and the actual files in `assets/avatars/`;
+a mismatch fails the whole SW install via `addAll()`).
+
+**Slicing is not a grid crop, and the reason matters.** Characters overflow
+their cells constantly (raised swords, wings, hair, feet hanging into the row
+below), so a plain crop clips and a padded crop drags in neighbours. The first
+version padded each cell and eroded the alpha mask 1px to snap the thread
+joining two characters — which fails, because the real joins are ~13px WIDE
+but very FAINT (alpha 19-67 against a body's ~250), and eroding hard enough to
+break one would delete every thin sword blade on the sheet. A full audit of all
+72 sprites on 2026-08-26 found **9 with foreign fragments** (a green sneaker
+over a girl's cat ear, purple wingtips in another character's flames) and **0
+clipped** — the approach was tuned against clipping and paid for it in bleed.
+
+The current slicer instead labels the **whole sheet** at once, since a
+character's own overflow is solidly connected to it while a neighbour's is
+solidly connected to *them*: seed on high alpha (excluding the faint bridges),
+label globally, give each cell the component that most occupies it, then split
+contested soft pixels by nearest seed (a Voronoi via `distance_transform_edt`).
+Glow and aura survive (nearest their own character); a neighbour's boot does
+not. Two further guards: a character's *detached* own props (music notes, a
+soccer ball, a floating orb) are re-added only when wholly inside the cell,
+which a neighbour's intruding limb never is; and where two characters are
+genuinely **opaquely fused** (sheet C column 4 never drops below alpha 120 at
+the row2/row3 seam — labelling alone produced 493px-tall two-character
+sprites), the mask is cut at the narrowest row between them, which is a no-op
+for every cleanly separated sprite. All 72 re-verified visually after the
+rewrite: no bleed, no clipping, props intact.
+
+This fully **replaced** an earlier 10-character batch (boy-base/girl-base/
+explorer/adventurer/scholar/student/jedi/princess/knight/warrior) that was
+built by flood-fill background removal from a flat-backdrop reference sheet.
+The user explicitly rejected reusing that batch once real-alpha sheets were
+available — those files, `tools/reference-sheet.png`, and the old
+`slice-avatars.py` were deleted outright, not deprecated in place. If any of
+those ids turn up in old profile data, they're simply gone from the catalog —
+`avatarHtml()`'s "unknown char: id" fallback (below) covers it.
+
+**Value convention** (unchanged from the original design): `equippedAvatar`
+holds either an emoji character (the original shop) or the string
+`"char:<id>"`. Everything that displays an avatar goes through `avatarHtml()`
+in `app.js`, which emits an `<img>` for `char:` values and escaped text
+otherwise, falling back to 🙂 for a `char:` id missing from the catalog.
+Unlocks are namespaced `avatar:<id>` / `char:<id>` so an id reused across the
+two catalogs can never gift the other for free.
+
+**Tiers**: each entry in `ShopCatalog.CHARACTERS` carries `tier: "standard"`
+or `tier: "chase"`, plus `defaultPrice`/`defaultActive` — deliberately named
+"default" because the catalog array is never the live truth for price/active,
+only the starting point (see Shop Config below). Chase avatars are the 12
+most elaborate designs (angel/phoenix/dragon-rider/etc.), meant to be
+expensive and rotated rather than permanently purchasable; two
+(`angel-knight-boy`, `phoenix-rider-girl`) default to always-active, the
+other 10 default off, waiting in the pool for a parent to rotate in via
+Manage Avatars. Standard tier spans free starters (4), a cheap "sticker" band
+(20⭐, ~28 items), a mid costumed band (60⭐, ~24 items), and a small premium
+band (120⭐, 4 items) — see the comments above each price band in
+`shop-catalog.js` for the exact list; there's nothing enforcing these bands
+beyond convention, a parent can set any price via Manage Avatars.
+
+**Shop Config (parent-controlled active/price overrides)** — `js/app.js`:
+- `ShopCatalog.CHARACTERS` entries are read-only defaults. The live
+  active/price state is a sparse override object, `{ [id]: {active, price} }`,
+  persisted to `localStorage` (`ws_shop_config`) and — when a household is
+  connected — to `households/{code}.shopConfig` in Firestore (same doc,
+  same merge pattern as `catalogCode`; see `Sync.saveShopConfig` /
+  `fetchShopConfig` / `watchShopConfig` in `sync.js`). `effectiveCharacter()`
+  merges default + override per field independently, so setting a custom
+  price doesn't implicitly decide active or vice versa.
+- **Manage Avatars** (`#screen-manage-avatars`, opened only from a button on
+  the PIN-gated Parent Dashboard — it has no PIN of its own, it inherits the
+  dashboard's) lists every character grouped Chase / Standard with a live
+  "In Store" checkbox and an editable price. Changes save immediately
+  (localStorage + Firestore) and the Star Shop re-fetches the config every
+  time it's opened (`openShop()` renders from cache first, then reconciles),
+  so a change the parent makes on their phone shows up next time a kid opens
+  the shop on their iPad without needing an app restart.
+- **Known limitation, accepted, not engineered around**: if a parent edits
+  Manage Avatars on two devices within the same second or so, the second
+  device's cloud-refresh fetch can land after the first device's local edit
+  and briefly revert it in the UI until the next fetch. Household-scale risk
+  window, self-corrects, not worth a CRDT-style merge for this app.
+- No automatic calendar-based rotation was built — "rotate chase avatars on
+  a schedule" is presently a manual act (toggle checkboxes in Manage
+  Avatars), not a cron. If the user wants real scheduled rotation later,
+  that needs a start/end date pair per chase avatar checked at render time —
+  straightforward to add on top of this, deliberately not built speculatively.
+
+Source art resolution is the hard ceiling: figures are ~230-310px tall on the
+sheets, comfortable up to roughly 130-150 CSS px on a 2x screen and no
+further. Displaying a character much larger than the shop tile needs new art,
+not upscaling.
+
+**Pricing model (revised 2026-08-26 per explicit user direction)**: characters
+are the premium option, emoji avatars are the cheap everyday option — not the
+reverse, and not comparable. Only 4 standard characters are active by
+default: one boy and one girl at each of two skin tones (`basketball-boy`,
+`karate-boy`, `cheerleader-girl`, `doctor-girl`), at 50⭐ — a deliberately
+small, deliberately diverse "baseline row," not a curated 20-item storefront
+like the first pass shipped. Every other standard character starts inactive
+at 100-220⭐, comfortably above the emoji ceiling (150⭐), so rotating one in
+via Manage Avatars reads as a real step up. All 68 non-baseline standard
+characters remain in the catalog; only `defaultActive` changed, so a parent
+who had already turned extras on keeps them — Manage Avatars overrides are
+independent of these defaults. Chase tier unchanged (12 characters, 350⭐,
+`angel-knight-boy`/`phoenix-rider-girl` default-on).
+
+## Manage Word Catalog injection review (2026-08-26)
+
+A focused, independent second pass specifically on the paste-to-render
+pipeline (`parseCatalogText()` → preview → `mergeWeeks()`/Firestore →
+`sanitizeWeek()` → every render site), since that's the one surface where a
+household types large free-text blocks that get stored and rendered back
+across every device on a shared catalog. There's no SQL anywhere in this app
+(Firestore is a document store), so the analogous risks are stored XSS,
+Firestore path/id abuse, prototype pollution, and ReDoS — all four were
+checked, not assumed.
+
+**Medium, fixed — the catalog *code* field, not the paste box, could resolve
+into an unrelated Firestore document.** Unlike the household-code field
+(`maxlength="6"`), the catalog-code input had no character restriction, and
+`connectCatalog()` passed it straight to `.doc(catalogCode)`. Firestore's SDK
+treats `/` in a doc-path argument as segment separators, not a literal
+character — a code like `zoelive/weeks/7-w1` doesn't create a catalog with a
+slash in its name, it resolves directly into that real, existing week
+document. Reachable not just by typing it but via a crafted `?catalog=`
+invite link that pre-fills the field with no visible slash — one click on
+Connect and it's silently misrouted. **Bounded, not a cross-household leak**:
+the hardcoded `db.collection("catalogs")` root and Firestore's lack of `..`
+traversal make it structurally impossible to reach the `households` tree, and
+reaching any specific nested doc this way requires already knowing both a
+real catalog code and a real week id inside it. Still a real robustness bug —
+fixed by rejecting any code containing `/` or `\` (or over 60 chars) in
+`connectCatalog()` before ever calling `catalogRef()`, with a clear toast
+instead of a silent misconnect.
+
+**Fixed, latent-not-exploited — `escapeAttr()` didn't escape `>` or `'`.**
+Every existing call site happened to land in a double-quoted attribute or a
+text node, where those two are inert, so nothing was actually broken — but
+the gap meant correctness depended on every *future* call site avoiding
+single-quoted attributes, which is exactly the kind of assumption that stops
+being true the first time someone doesn't know it exists. Now escapes all
+five HTML-meaningful characters, `&` first to avoid double-escaping.
+Regression-tested with a live `">script` payload pasted through the real
+Manage Word Catalog flow end-to-end (preview → save → reload → Home render):
+zero live `<script>` elements at any point, content displayed as literal text.
+
+**Fixed, defense-in-depth — post-save `state.catalogWeeks` bypassed
+`sanitizeWeek()`.** Every *other* path that populates `state.catalogWeeks`
+(`ensureCatalogLoaded()`) routes through it; the two post-`mergeWeeks()` save
+paths (paste import and starter-list import) didn't. Not currently
+exploitable — both sources already produce sanitizeWeek()-shaped output — but
+it's exactly the kind of inconsistency that could silently reopen the
+"poisoned catalog crashes other households" bug (see the bug-patterns section
+above) the day either producer changes. Now both call `sanitizeWeeks()` too.
+
+**Fixed, cheap hardening — no length cap on pasted word/definition text.**
+Bounded by Firestore's 1MiB document cap either way (caught by the existing
+try/catch), but a household sharing a catalog with a hostile member could
+otherwise bloat everyone's sync with one absurdly long "word" before that
+cap ever kicks in. `parseCatalogText()` now caps word text at 200 chars and
+definitions at 500 — far beyond any real word or definition, so no effect on
+legitimate use.
+
+**Confirmed clean, no fix needed**: no catastrophic-backtracking risk in the
+one regex in this path (`GRADE ... (starts ...)` — `\s+`/`\S+` operate on
+disjoint character classes with no ambiguous split point, and the optional
+suffix has no nested repetition); no prototype-pollution vector (`sanitizeWeek()`
+builds fresh object literals rather than spreading, `mergeWeeks()` keys a
+`Map` by id rather than assigning object properties, and pasted text is never
+used as a dynamic property key anywhere); `slugify()` cannot produce a `/` or
+a path-traversal segment under any input (output alphabet is strictly
+`[a-z0-9-]+`), so a hostile grade name can't escape the `catalogs/{code}/weeks/`
+subcollection; `sanitizeWeek()` validates shape/type only (by design — it's
+not meant to sanitize content), and every render site was individually traced
+and confirmed to still be doing the actual escaping.
+
+## Parent-visible practice tracking (fixed 2026-08-26)
+
+Every study mode already called `recordModeStart()` on open and its answers
+landed in that day's activity doc's `modes` counts — the data existed from the
+start. What was missing was surfacing it: the Parent Dashboard's only
+prominent activity section was "Recent tests" (populated exclusively by Test
+Mode/Speed Quiz via `student.recentTests`), with every other mode's usage
+compressed into a single "· mostly spelling" fragment on one summary line. A
+parent whose kid did Spelling Practice or Word Scramble — the two modes these
+particular kids actually prefer — would see nothing resembling evidence that
+practice happened.
+
+Fixed by adding a **"This week's practice"** section to `renderStudentCard()`
+in `app.js`: every mode used in the current 7-day window, sorted by session
+count descending, via a `MODE_LABELS` map matching the Home menu's own
+icons/names. It counts *sessions* (how many times `recordModeStart()` fired),
+not answers — "used Word Scramble 3 times" is the honest claim the data
+supports; answer-level totals stay in the existing accuracy line, paired with
+real correct/attempted counts rather than presented alone. "Recent tests"
+stays as its own section for percentage-scored Test Mode/Speed Quiz results
+specifically — this doesn't replace it, it fills the gap next to it.
+
+## Word list duplicate check (fixed 2026-08-26)
+
+User found 3 of 12 words repeated within Grade 7 "Precision" Week 1 of the
+starter lists. All 8 packs / 24 weeks were swept for within-week duplicates
+(a word repeating across *different* weeks or grades is fine and expected;
+only a repeat within one week's own list is a bug). Only that one week had
+any — `benevolent`/`credible`/`plausible` appeared in both the spelling list
+and (correctly) the vocab list; the spelling-list copies were swapped for
+different Latin-root words at the same difficulty (`altruistic`, `spurious`,
+`prescient`) so the vocab entries and their definitions were left intact.
+Independently re-verified programmatically after the fix: all 24 weeks have
+exactly 12 case-insensitive-unique words. If more starter content is ever
+added, re-run this check — nothing enforces uniqueness at write time, since
+`starter-lists.js` is hand-authored content, not generated.
+
+## Privacy Policy & Terms of Use (added 2026-08-26)
+
+A plain-language (not corporate-legalese) `#screen-legal` page, linked from
+the profile picker screen (reachable pre-login, since that's the only place
+it's linked from — `showScreen("legal")`/`showScreen("profiles")` don't depend
+on any profile being selected). Covers: what's collected (name/nickname,
+grade, PIN, practice stats, avatar/theme prefs — nothing else, since the app
+never asks for anything else), where it's stored (local-first; Firestore only
+if sync is turned on), the shared-code access model stated honestly (anyone
+with a code has full access, by design), children's-privacy language (parent
+sets it up for their own kids, no ads/tracking/analytics/third-party sharing),
+and an honest note that there's no in-app "delete my household" button yet.
+
+**Contact address**: `argusresearchcenter@gmail.com`, filled in 2026-08-26 per
+explicit user confirmation (a placeholder was left deliberately unfilled
+until then, since this page is public on GitHub Pages). Stated as a stopgap
+until the user has their own domain — worth swapping to a domain-based
+address later rather than leaving the personal Gmail up indefinitely.
+
+## Usability features (added 2026-08-26)
+
+Two features aimed squarely at adoption and retention, both fully local, both
+verified end-to-end in a browser before being written up here.
+
+### 1. Starter Word Lists (`js/starter-lists.js`)
+
+The app's single biggest adoption blocker was that a brand-new family opened it
+to "No word list yet" and could do *nothing* until an adult typed out a full
+week of words. Now: Home's empty state shows a prominent **⚡ Get Started with
+a Starter List** button, and Manage Word Catalog offers the same thing, leading
+to a grade picker (Grades 1–8, 3 weeks × 12 words each — 8 spelling-only + 4
+vocab-with-definition, matching the existing Abeka-style convention so every
+mode including Vocab Practice works immediately).
+
+- Import reuses the **same** save path as the paste importer (`mergeWeeks`,
+  local + Firestore write, `loadCatalogAndWeek` refresh) rather than a second
+  parallel path — one code path to reason about when catalog writes misbehave.
+- A student profile with no `grade` set adopts the pack's grade on import,
+  otherwise `computeAutoWeek()` filters it out by grade and the import appears
+  to silently do nothing.
+- Week ids are `starter-{grade}-w{n}` — deliberately NOT the paste parser's
+  `{grade-slug}-w{n}`, so a starter pack can never overwrite a hand-typed week.
+- **Word ids are deterministic** (`starter-{grade}-w{n}-v{i}` / `-s{i}`), not
+  `uid()`. This is load-bearing: `loadProgressForWeek()` reconciles stored
+  progress against the catalog *by word id*, so random ids would mean
+  re-importing the same pack (or a second device importing it) mints new ids
+  and silently resets the child's entire history for those weeks. Caught and
+  fixed during self-review, then verified by re-importing a pack after
+  practicing and confirming attempt counts survived.
+
+### 2. Smart Review + Daily Goal
+
+**Smart Review** (`🧠` on the Home menu, with a badge showing how many words are
+waiting) is the first mode that is not scoped to a single week. It pulls the
+student's weakest words out of *every* week they have ever practiced, so old
+material doesn't rot once the class moves on.
+
+- Queue is built from the `ws_progress_index_{profileId}` index, skips
+  gold-medal words, and sorts weakest-first: medal rank ascending, then
+  accuracy ascending, with never-practiced words scored 0.5 so they rank behind
+  demonstrated weaknesses but ahead of merely-okay words. Capped at 15/session.
+- **Structural gotcha worth preserving**: a review word belongs to *another
+  week's* progress doc, so stats must be written back to that word's own doc —
+  never to `state.progress`, which still points at the currently selected week.
+  `reviewSession.docs` holds every touched doc by weekId and saves each
+  individually; if the reviewed word's week happens to be the open one,
+  `state.progress` is re-pointed at the saved doc so Home's medal counts don't
+  show stale pre-review numbers. Verified by snapshotting two week docs, running
+  a 15-word review spanning both, and confirming attempt counts landed in the
+  correct doc (Week 1 +11, Week 2 +4, matching the queue exactly).
+- Review is exempt from the "needs a current word list" nav guard, since it
+  works off history and is useful precisely when the current week is empty.
+- Guards against progress docs missing `spelling`/`vocab` sub-objects (older
+  builds, tampered localStorage) — one malformed word must not throw, because
+  the queue is rebuilt on every `renderHome()` for the badge count.
+
+**Daily Goal** is a 20-answer/day target rendered as a progress bar on Home,
+worth a one-time +5⭐. It counts answers via `recordAnswer()`, so no study mode
+needs to know it exists. The `goalAwarded` flag lives **on the persisted
+activity doc**, not in memory, so reloading the page or practicing on a second
+device cannot re-award the bonus — verified by reloading mid-day and answering
+again (stars held at 8, flag stayed true).
+
+## Security review (2026-08-26) — what was found and fixed
+
+A three-agent review (client-side, data layer, avatar QA). Everything below is
+**fixed in code already**, except the two items explicitly marked as requiring
+Firebase console access.
+
+**Critical — the catalog document leaked the household code.** `connectCatalog()`
+stored the household's own 6-character access code in plaintext as
+`ownerHousehold` on the catalog doc. Catalog codes are *designed to be handed to
+other families*, so the intended sharing workflow itself handed the other
+household full read/write access to this one's profiles, PINs, and scores. Fixed
+by storing an opaque 256-bit `ownerToken` instead (`generateOwnerToken` in
+`sync.js`), compared token-to-token. Note a hash of the code would NOT have been
+enough — 32^6 is ~1e9, brute-forceable offline in seconds. Legacy catalogs
+carrying the old field, and catalogs with no owner recorded, fail open to
+editable so nothing live gets locked out. **Manual cleanup worth doing: if any
+catalog doc in Firestore still has an `ownerHousehold` field, delete that field
+in the console** — the code no longer writes it but cannot scrub what is already
+there. HANDOFF's earlier note says the real `zoelive` catalog predates the field
+and so should be clean; worth confirming.
+
+**Medium — poisoned shared catalog content could crash other households.**
+`loadProgressForWeek()` called `week.words.map()` unguarded, and `progress.words`
+likewise. Any household with the catalog code could write a week doc with
+`words` missing/null/a string and break week selection for *everyone* sharing
+that catalog until someone hand-repaired Firestore. Fixed with
+`sanitizeWeek()`/`sanitizeWeeks()` at the boundary (see the bug-patterns section
+above), verified against a deliberately hostile catalog.
+
+**Medium — a negative avatar price minted stars.** `effectiveCharacter()`
+type-checked `price` but never range-checked it, and `buyItem()` does
+`p.stars -= price`. A kid could write `shopConfig` directly via the SDK
+(bypassing the Manage Avatars UI clamp) with `price: -100000` and buy their way
+to a huge balance. Fixed with `sanitizePrice()` at both the config layer and the
+spend layer; verified that `-100000`, `"free"`, and `NaN` all fall back to the
+catalog default.
+
+**Medium — a `undefined` field could silently stall sync forever.** Firestore
+throws *synchronously* on an `undefined` field value, and since
+`pushProgress`/`pushActivity` are fire-and-forget, that surfaced as an unhandled
+rejection: local save succeeds, UI shows success, and every later write of that
+doc fails identically with no user-visible error. Reachable via hand-edited
+catalog data omitting `definition`. Fixed three ways — `sanitizeWeek()` forces
+`definition` to a string, `loadProgressForWeek()` guards with `|| ""`, and
+`stripUndefined()` in `sync.js` scrubs doc-shaped writes as defence in depth.
+
+**Medium — swallowed write errors.** The fire-and-forget writes used
+`.catch(() => {})`, hiding exactly the failure above. They now log via
+`warnWriteFailed()`, and a failed shop-config sync tells the parent it saved
+locally but did not reach the kids' devices.
+
+**Also**: service worker now only caches same-origin 2xx responses; dead
+`watchShopConfig` removed.
+
+**Requires Firebase console access (not done, cannot be done from the repo):**
+1. **Apply `docs/firestore.rules`.** The recommended ruleset is written out in
+   that file with rationale. Its one substantive change is splitting `get` from
+   `list` so a stranger cannot dump every household code and shopConfig in one
+   query — the app only ever fetches by known id, so this costs the family
+   nothing. It is **not yet applied**; review it against the live rules first.
+2. **Enable App Check** (free on Spark). Anonymous auth means anyone can create
+   documents, so a trivial script could exhaust the 20k/day write quota and take
+   the app offline for the family. Low motivation for an obscure family app, but
+   cheap to weaponise and cheap to prevent.
+
+**Explicitly assessed and accepted, not bugs**: codes-as-passwords, the
+client-side parent PIN, kids being able to tamper with their own local star
+balance, and the public Firebase web config. All are documented design
+tradeoffs. Note the PIN and the Manage Avatars gate *cannot* be made real at the
+data layer under the current auth model — the whole household shares one
+anonymous session, so Firestore rules cannot tell a parent from a kid. Making
+that real needs per-person auth (Blaze-plan Cloud Functions), which is out of
+scope. Household-code brute force was computed as infeasible: 32^6 ≈ 1.07
+billion, ~59 years at Spark's 50k reads/day.
 
 ## Deploy process
 
@@ -121,6 +507,16 @@ week with an earlier start date, not appended after List 10.
 - **Firestore `undefined` field**: `.set()`/`.update()` throws *synchronously*
   on any field value of `undefined`, before your `.catch()` can run. Always
   guard optional profile fields with `|| ""` / `|| []` etc. in `sync.js`.
+- **Shared catalog content is untrusted input from another user.** Anyone with
+  the catalog code can write `catalogs/{code}/weeks/{id}` directly, so a week
+  doc is not our own data — it can be missing `words`, have `words` as a
+  string/null, contain junk word entries, or carry a non-date `weekStartDate`.
+  All catalog weeks are normalized through `sanitizeWeek()`/`sanitizeWeeks()`
+  in `app.js` at the point they enter `state.catalogWeeks`; never `.map()` over
+  `week.words` (or a stored `progress.words`) without going through that or an
+  `Array.isArray` guard. A 2026-08-26 security review found exactly this crash
+  path — an unguarded `week.words.map()` in `loadProgressForWeek()` that let one
+  household break week selection for every household sharing their catalog.
 - **Self-echo / safe-apply**: a device's own Firestore write echoes back
   through its own `onSnapshot` listener. Filter `hasPendingWrites`, and only
   apply remote state changes to `state.week` (or similar live-session state)
@@ -175,10 +571,14 @@ is static and shared by the whole family, not personalizable per install.
 
 ## Parked / not built
 
-- **Dress-up avatar shop upgrade** — explored via two rounds of hand-SVG
-  Claude Artifact mockups, hit a real quality ceiling on hand-authored base
-  art (see the memory record for links/details). Explicitly parked, live app
-  untouched, only pick back up if the user says so.
+- **Mix-and-match dress-up** (equip a hat, then a torso, then a weapon onto one
+  base) — still not built, and the character set above does not enable it. The
+  reference sheet's accessory catalog is drawn at arbitrary scales and angles,
+  not fitted to the base pose, so compositing those pieces reproduces exactly
+  the floating-hat misalignment that killed the earlier hand-SVG rounds. This
+  needs per-slot art generated against one fixed pose (an image model can do
+  that; this session cannot) — then slicing and anchor-point work, not more
+  hand-authored paths.
 - **Simplified word-search mode** — scoped as a possible 7th study mode
   (batch 8–10 words, horizontal/vertical only) but ranked behind Word Scramble
   by effort; nothing built.

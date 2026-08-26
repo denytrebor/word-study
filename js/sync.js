@@ -9,6 +9,7 @@
 const Sync = (function () {
   const HOUSEHOLD_KEY = "ws_household_code";
   const CATALOG_KEY = "ws_catalog_code";
+  const OWNER_TOKEN_KEY = "ws_owner_token";
   const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
 
   let db = null;
@@ -43,6 +44,22 @@ const Sync = (function () {
     return code;
   }
 
+  // An opaque, high-entropy identifier for "this household," used ONLY to mark
+  // catalog ownership. It exists specifically so the catalog document never
+  // has to carry the household's real access code — see ensureOwnerToken().
+  // 256 bits from a CSPRNG: unlike the 6-char household code (32^6 ≈ 1e9,
+  // brute-forceable offline in seconds), this cannot be reversed or guessed,
+  // which is the whole point of using a token here instead of a hash of the code.
+  function generateOwnerToken() {
+    const bytes = new Uint8Array(32);
+    if (window.crypto && window.crypto.getRandomValues) {
+      window.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
   /* ----------------------------- Household ----------------------------- */
 
   function getHouseholdCode() {
@@ -56,9 +73,34 @@ const Sync = (function () {
     const okAuth = await ready;
     if (!okAuth || !db) throw new Error("Sync not available");
     const code = generateCode();
-    await db.collection("households").doc(code).set({ createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    const token = generateOwnerToken();
+    await db.collection("households").doc(code).set({
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      ownerToken: token,
+    });
     setHouseholdCode(code);
+    localStorage.setItem(OWNER_TOKEN_KEY, token);
     return code;
+  }
+
+  // Returns this household's owner token, creating and persisting one if the
+  // household predates the token (every household created before 2026-08-26).
+  // Cached locally so the ownership check on the catalog editor doesn't cost a
+  // Firestore read on every open.
+  async function ensureOwnerToken() {
+    const cached = localStorage.getItem(OWNER_TOKEN_KEY);
+    if (cached) return cached;
+    const hCode = getHouseholdCode();
+    if (!hCode || !db || !(await ready)) return null;
+    const ref = db.collection("households").doc(hCode);
+    const snap = await ref.get();
+    let token = snap.exists ? snap.data().ownerToken : null;
+    if (!token) {
+      token = generateOwnerToken();
+      await ref.set({ ownerToken: token }, { merge: true });
+    }
+    localStorage.setItem(OWNER_TOKEN_KEY, token);
+    return token;
   }
 
   async function joinHousehold(code) {
@@ -101,7 +143,7 @@ const Sync = (function () {
       lifetimeStars: profile.lifetimeStars || 0,
       role: profile.role || "",
       pin: profile.pin || "",
-    }, { merge: true }).catch(() => {});
+    }, { merge: true }).catch(warnWriteFailed("profile " + profile.id));
   }
 
   async function fetchHouseholdCatalogCode() {
@@ -181,18 +223,35 @@ const Sync = (function () {
     if (!okAuth || !db) throw new Error("Sync not available");
     const clean = catalogCode.trim();
     if (!clean) throw new Error("Empty catalog code");
+    // Firestore's .doc(path) treats "/" as path SEGMENT separators, not a
+    // literal character — catalogRef(clean) below is
+    // db.collection("catalogs").doc(clean), so a code containing a slash
+    // (e.g. "zoelive/weeks/7-w1") doesn't create a catalog with a slash in
+    // its name, it resolves straight into an existing nested document
+    // (catalogs/zoelive/weeks/7-w1, a real week doc). Found in the
+    // 2026-08-26 security review, reachable not just by typing it but via a
+    // crafted ?catalog= invite link that pre-fills this field with no
+    // visible slash — one click on Connect and it's misrouted. Reject
+    // before ever calling catalogRef rather than let the SDK reinterpret it.
+    if (!/^[^/\\]{1,60}$/.test(clean)) throw new Error("Invalid catalog code");
     const ref = catalogRef(clean);
     const snap = await ref.get();
     if (!snap.exists) {
-      // ownerHousehold is a soft guardrail, not a security boundary — same
-      // posture as the household/catalog codes themselves (rules only check
-      // "is this client authenticated"). It exists so the UI can warn
-      // someone before they overwrite another household's shared word list;
-      // it can't stop a determined technical user from writing directly.
-      const hCode = getHouseholdCode();
+      // Ownership is marked with an opaque ownerToken, NEVER the household
+      // code. A catalog code is *meant to be handed to other families* — so
+      // anything stored on this document is readable by them by design.
+      // Storing the raw household code here (as this once did) leaked full
+      // read/write access to the owning household's profiles and scores to
+      // every household they shared a word list with: found in the 2026-08-26
+      // security review, and the reason this field is a token now.
+      //
+      // It remains a soft guardrail either way — it only lets the UI warn
+      // before someone overwrites another household's shared word list, and
+      // cannot stop a determined technical user writing directly.
+      const token = await ensureOwnerToken();
       await ref.set({
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        ownerHousehold: hCode || "",
+        ownerToken: token || "",
       });
     }
     const hCode = getHouseholdCode();
@@ -226,6 +285,54 @@ const Sync = (function () {
     return snap.docs.map((d) => d.data());
   }
 
+  // Firestore's .set()/.update() throw SYNCHRONOUSLY on any field whose value
+  // is `undefined` — before a .catch() can run (see docs/HANDOFF.md). Inside an
+  // async function that surfaces as a rejected promise instead of a crash, and
+  // since the write-and-forget callers never await it, the failure is entirely
+  // silent: the local save already succeeded, the UI shows success, and every
+  // later write of that same doc fails identically until the bad field is
+  // fixed. `pushProfile` avoids this by listing every field with a `|| ""`
+  // default; the doc-shaped writers below can't, so they strip instead.
+  function stripUndefined(value) {
+    if (Array.isArray(value)) return value.map(stripUndefined);
+    if (value && typeof value === "object" && !(value instanceof Date)) {
+      const out = {};
+      Object.keys(value).forEach((k) => {
+        if (value[k] !== undefined) out[k] = stripUndefined(value[k]);
+      });
+      return out;
+    }
+    return value;
+  }
+
+  // Write-and-forget paths have no UI to report into, so a swallowed rejection
+  // used to leave a permanently stalled sync completely invisible. Log instead
+  // of discarding, so a console check reveals it.
+  function warnWriteFailed(what) {
+    return (err) => console.warn("[word-study] sync write failed:", what, err);
+  }
+
+  /* ----------------------------- Shop config ----------------------------- */
+  // Which avatars are active in the Star Shop and what they cost is a
+  // household-wide storefront decision (the parent's, not any one kid's), so
+  // it lives on the household doc itself (households/{code}.shopConfig) next
+  // to catalogCode — same doc, same merge pattern as connectCatalog above —
+  // rather than on a profile. Shape: { [avatarId]: { active: bool, price: number } }.
+
+  async function saveShopConfig(config) {
+    const hCode = getHouseholdCode();
+    if (!hCode || !db || !(await ready)) return;
+    await db.collection("households").doc(hCode).set({ shopConfig: config }, { merge: true });
+  }
+
+  async function fetchShopConfig() {
+    const hCode = getHouseholdCode();
+    if (!hCode || !db || !(await ready)) return null;
+    const snap = await db.collection("households").doc(hCode).get();
+    return snap.exists ? (snap.data().shopConfig || null) : null;
+  }
+
+
   /* ------------------------------ Progress ------------------------------ */
   // Per (profile, week) practice results — kept separate from the shared
   // catalog content so scores never live anywhere but under the owning
@@ -239,7 +346,7 @@ const Sync = (function () {
   async function pushProgress(profileId, weekId, progressDoc) {
     const ref = progressRef(profileId, weekId);
     if (!ref || !(await ready)) return;
-    ref.set(progressDoc, { merge: true }).catch(() => {});
+    ref.set(stripUndefined(progressDoc), { merge: true }).catch(warnWriteFailed("progress " + weekId));
   }
 
   async function fetchProgress(profileId, weekId) {
@@ -278,7 +385,7 @@ const Sync = (function () {
   async function pushActivity(profileId, date, activityDoc) {
     const ref = activityRef(profileId, date);
     if (!ref || !(await ready)) return;
-    ref.set(activityDoc, { merge: true }).catch(() => {});
+    ref.set(stripUndefined(activityDoc), { merge: true }).catch(warnWriteFailed("activity " + date));
   }
 
   async function fetchActivityRange(profileId, dateStrings) {
@@ -301,6 +408,9 @@ const Sync = (function () {
     getCatalogCode,
     cacheCatalogCode,
     connectCatalog,
+    saveShopConfig,
+    fetchShopConfig,
+    ensureOwnerToken,
     fetchCatalogMeta,
     saveCatalogWeeks,
     fetchCatalogWeeks,

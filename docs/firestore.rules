@@ -1,0 +1,102 @@
+// Recommended Firestore security rules for the Word Study app.
+//
+// ⚠️ NOT YET APPLIED. Rules live in the Firebase console, which this repo has
+// no access to — paste these into
+//   Firebase console → Firestore Database → Rules
+// for project `spelling-words-671aa`, review against whatever is live today,
+// then Publish. Nothing in the app depends on them being applied; they only
+// tighten what a stranger can do.
+//
+// ---------------------------------------------------------------------------
+// WHAT THIS CHANGES, AND WHY
+// ---------------------------------------------------------------------------
+// The app's access model is "anyone who knows the code is in" — a deliberate,
+// documented tradeoff (see docs/HANDOFF.md). These rules do NOT change that.
+// What they add is one thing the current posture is believed to be missing:
+// the difference between `get` (fetch ONE document whose id you already know)
+// and `list` (query a whole collection and read every document in it).
+//
+// The app only ever does `get` at the top level — it looks up a household or
+// catalog by a code a human typed. It never lists `households` or `catalogs`.
+// So denying `list` there costs the family nothing, but removes the ability
+// for any anonymous client to dump every household code, every catalogCode,
+// and every shopConfig in the project with a single query. That is the gap
+// worth closing: without it, the ~1-billion-code keyspace protecting the
+// family is irrelevant, because nobody has to guess anything.
+//
+// Sub-collections keep `list`, because the app genuinely needs it (reading all
+// profiles in a household, all weeks in a catalog) — and reaching them already
+// requires knowing the parent code.
+//
+// Anonymous auth stays required. It is not a real identity, just a cheap gate
+// that keeps unauthenticated scanners out and lets App Check (recommended
+// separately) do the heavier lifting against scripted abuse.
+//
+// Still NOT enforceable at the rules layer, by design of the auth model:
+//   - Parent vs. kid. Everyone in a household shares one anonymous session, so
+//     the parent PIN and the Manage Avatars gate can only ever be client-side
+//     conventions. Making them real needs per-person auth (Blaze-plan Cloud
+//     Functions or real accounts), which is out of scope for a family app.
+//   - Preventing a code-holder from corrupting data they legitimately reach.
+//     Mitigated in the client instead: sanitizeWeek() in app.js treats all
+//     shared catalog content as untrusted, and sanitizePrice() stops a tampered
+//     shopConfig from minting stars.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    match /households/{code} {
+      // Fetch one household by a code someone typed: allowed.
+      allow get: if signedIn();
+      // Enumerate every household in the project: never. Nothing in the app
+      // does this, and it would otherwise hand over every code at once.
+      allow list: if false;
+
+      allow create: if signedIn();
+      allow update: if signedIn();
+      // Deletion is already blocked today and the app has no delete path.
+      // Keeping it off means a hostile write cannot destroy a household
+      // outright (it can still overwrite fields — see HANDOFF's blast-radius
+      // note; that is an accepted limit of this auth model).
+      allow delete: if false;
+
+      match /profiles/{profileId} {
+        // Listing profiles requires already knowing the household code.
+        allow get, list: if signedIn();
+        allow create, update: if signedIn();
+        allow delete: if false;
+
+        match /progress/{weekId} {
+          allow get, list, create, update: if signedIn();
+          allow delete: if false;
+        }
+
+        match /activity/{date} {
+          allow get, list, create, update: if signedIn();
+          allow delete: if false;
+        }
+      }
+    }
+
+    match /catalogs/{catalogCode} {
+      allow get: if signedIn();
+      allow list: if false;
+
+      allow create: if signedIn();
+      allow update: if signedIn();
+      allow delete: if false;
+
+      // Shared word lists. Cross-household sharing is the intended feature, so
+      // any signed-in client that knows the catalog code can read and write
+      // here. The client treats everything read from this subtree as untrusted
+      // input (sanitizeWeek in app.js) precisely because of that.
+      match /weeks/{weekId} {
+        allow get, list, create, update: if signedIn();
+        allow delete: if false;
+      }
+    }
+  }
+}

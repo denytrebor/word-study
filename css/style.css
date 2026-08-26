@@ -114,6 +114,25 @@ main#app-main {
 h2 { font-size: 1.5rem; margin-bottom: 6px; }
 .hint { color: var(--muted); font-size: 0.95rem; }
 
+/* LEGAL (Privacy Policy & Terms of Use) */
+.legal-footer-link { text-align: center; margin-top: 18px; }
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px;
+}
+.legal-content { max-width: 640px; margin: 0 auto; line-height: 1.55; }
+.legal-content h3 { margin: 22px 0 8px; font-size: 1.05rem; }
+.legal-content h3:first-of-type { margin-top: 10px; }
+.legal-content h4 { margin: 14px 0 4px; font-size: 0.92rem; color: var(--text); }
+.legal-content p { margin: 0 0 10px; color: var(--text); font-size: 0.92rem; }
+.legal-updated { color: var(--muted); font-size: 0.8rem; font-style: italic; }
+
 /* BUTTONS */
 .btn {
   border: none;
@@ -647,6 +666,166 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 .shop-item.legendary { background: linear-gradient(160deg, #fff7e6, var(--card) 60%); }
 .shop-item.legendary::after { content: "★"; position: absolute; top: 6px; right: 10px; color: #d97706; font-size: 0.9rem; }
 .shop-back-btn { margin-top: 8px; }
+
+/* CHARACTER AVATARS
+   Illustrated avatars (assets/avatars/*.webp) render as an <img> wherever an
+   emoji avatar would render as text, so every avatar slot sizes them off the
+   height the emoji already had. Widths vary per figure (a knight with a sword
+   is wider than a bare-armed kid), so only height is pinned — never both, or
+   the art squashes. `image-rendering: auto` is the default but stated here
+   because these are upscaled slightly on big screens and must stay smooth. */
+.avatar-img {
+  display: inline-block;
+  width: auto;
+  vertical-align: middle;
+  image-rendering: auto;
+}
+#header-avatar .avatar-img { height: 34px; margin-right: 2px; }
+.profile-card .avatar .avatar-img { height: 84px; }
+.parent-card .avatar .avatar-img { height: 30px; }
+.psc-identity .avatar .avatar-img { height: 52px; }
+
+.shop-grid-char { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); }
+.shop-item .shop-item-char {
+  height: 92px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.shop-item .shop-item-char img { max-height: 92px; width: auto; }
+.shop-item .shop-item-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.shop-chase-title { color: #b45309; }
+
+/* MANAGE AVATARS (parent admin — active toggle + price per character) */
+.manage-avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.manage-avatar-card {
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border-radius: 16px;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.manage-avatar-card.chase { background: linear-gradient(160deg, #fff7e6, var(--card) 60%); }
+.manage-avatar-thumb { height: 78px; display: flex; align-items: flex-end; justify-content: center; }
+.manage-avatar-thumb img { max-height: 78px; width: auto; }
+.manage-avatar-label { font-size: 0.76rem; font-weight: 700; text-align: center; line-height: 1.2; }
+.manage-avatar-active {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.manage-avatar-price {
+  font-size: 0.8rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.manage-avatar-price input {
+  width: 56px;
+  text-align: right;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 5px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* STARTER WORD LISTS */
+.starter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.starter-card {
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.starter-card-title { font-weight: 800; font-size: 1.02rem; }
+.starter-card-desc { color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+.starter-card-meta { color: var(--muted); font-size: 0.78rem; font-weight: 700; }
+.starter-card-btn { margin-top: 8px; }
+
+/* DAILY GOAL */
+.daily-goal {
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 0 auto 16px;
+  max-width: 420px;
+}
+.daily-goal.hidden { display: none; }
+.daily-goal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 700;
+  font-size: 0.9rem;
+  margin-bottom: 8px;
+}
+.daily-goal-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.daily-goal-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 0.35s ease;
+}
+.daily-goal-fill.met { background: var(--success); }
+
+/* SMART REVIEW */
+.menu-card-review { position: relative; }
+.menu-card-badge {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent, #ea580c);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.6;
+}
+.menu-card-badge.hidden { display: none; }
+.review-origin {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
 
 /* TOAST */
 .toast {

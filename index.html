@@ -83,6 +83,39 @@
         <label for="voice-select">🗣️ Reading voice (this device)</label>
         <select id="voice-select"></select>
       </div>
+
+      <p class="legal-footer-link"><button id="btn-open-legal" class="link-btn">Privacy Policy &amp; Terms of Use</button></p>
+    </section>
+
+    <!-- SCREEN: Privacy Policy & Terms of Use -->
+    <section id="screen-legal" class="screen">
+      <h2>Privacy Policy &amp; Terms of Use</h2>
+      <div class="legal-content">
+        <p class="legal-updated">Last updated: 2026-08-26</p>
+
+        <h3>What this is</h3>
+        <p>Word Study is a study tool built for one family's own kids to practice spelling and vocabulary words. It isn't a commercial product, there's no company behind it, and it isn't intended for the general public to sign up for — a parent sets it up for their own household.</p>
+
+        <h3>Privacy Policy</h3>
+        <h4>What information is collected</h4>
+        <p>Only what a parent types in while setting the app up: a student's first name or nickname and grade level, a 4-digit PIN chosen for the parent dashboard, and the word lists being studied. As the app is used, it records practice statistics (which words were answered correctly, accuracy over time, streaks) and preferences (equipped avatar, theme, in-app star balance). No email address, birthdate, physical address, or payment information is ever collected, because the app never asks for any of those.</p>
+        <h4>Where it's stored</h4>
+        <p>Everything works fully offline, stored only in the browser's local storage on that device. If a household chooses to turn on "Sync across devices," the same information is also stored in Google Firebase (Firestore), so it can be reached from more than one device. Access to that stored data is controlled entirely by a short code your household chooses to share — anyone given that code can see and change that household's data, the same way anyone given a shared document link could. Word lists can additionally be shared across households on purpose, using a separate "catalog code," specifically so households can share the same list with each other.</p>
+        <h4>Children's privacy</h4>
+        <p>This app is meant to be set up and supervised by a parent or guardian for their own children, not signed up for directly by a child. No advertising, behavioral tracking, or analytics services are used, and nothing collected here is ever sold or shared with third parties. The only outside service involved is Google Firebase, used strictly as private storage for the household that chooses to enable sync — never for advertising or analytics purposes.</p>
+        <h4>Deleting your data</h4>
+        <p>Clearing your browser's site data for this app removes everything stored locally on that device. If cross-device sync was turned on, a copy also lives in Firebase; there is currently no self-service "delete my household" button in the app itself, so reach out using the contact info below to request that a household's stored data be deleted.</p>
+        <h4>Being honest about the security model</h4>
+        <p>Access here is by shared code, not username-and-password accounts. That's a deliberate tradeoff to keep the app simple for a family to use, not an oversight — but it does mean anyone who has your household's code has full access to what's stored under it, the same as anyone holding a spare house key. Don't share your household code outside your own family.</p>
+
+        <h3>Terms of Use</h3>
+        <p>This app is provided as-is, for personal family use, with no warranty of any kind — including no guarantee that it will always be available, that stored data will never be lost, or that it is free of bugs. It runs in part on a free tier of Google Firebase, which has its own usage limits; if those are ever exceeded the sync feature may stop working until the next day, though the app continues to work offline either way.</p>
+        <p>Please don't use the shared word-catalog feature to upload content that isn't an actual word list, or anything inappropriate, abusive, or illegal — it's meant to be shared between families using the app for its intended purpose. This app and how it works may change or be discontinued at any time without notice.</p>
+
+        <h3>Contact</h3>
+        <p>Questions, or a request to delete stored data: <strong>argusresearchcenter@gmail.com</strong>.</p>
+      </div>
+      <button id="btn-legal-back" class="btn btn-ghost">Back</button>
     </section>
 
     <!-- SCREEN: Parent Dashboard (read-only) -->
@@ -91,6 +124,7 @@
         <h2 id="parent-dash-title">Parent Dashboard</h2>
         <div class="parent-dash-actions">
           <button id="parent-dash-refresh" class="btn btn-ghost">🔄 Refresh</button>
+          <button id="parent-dash-manage-avatars" class="btn btn-ghost">🎛️ Manage Avatars</button>
           <button id="parent-dash-exit" class="btn btn-ghost">Exit</button>
         </div>
       </div>
@@ -112,6 +146,7 @@
     <section id="screen-catalog-editor" class="screen">
       <h2>📚 Manage Word Catalog</h2>
       <p class="hint">Paste a whole year at once. Start each grade with a line like <code>GRADE 7 (starts 2026-09-01)</code>, then list words for each week — separate weeks with a blank line. Add a comma and a definition for vocab practice.</p>
+      <button id="btn-starter-lists-from-catalog" class="btn btn-secondary">⚡ Or load a ready-made starter list</button>
       <p class="hint catalog-readonly-note hidden" id="catalog-readonly-note"></p>
       <div id="catalog-editor-form">
         <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 7 (starts 2026-09-01)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;friend&#10;habit, something you do often" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
@@ -122,6 +157,14 @@
       <p class="hint" style="text-align:center;margin-top:18px;">Catalog code: <strong id="catalog-code-display"></strong></p>
       <button id="btn-copy-catalog-link" class="btn btn-ghost household-copy-btn">🔗 Copy invite link</button>
       <button id="catalog-editor-exit" class="btn btn-ghost">Back</button>
+    </section>
+
+    <!-- SCREEN: Starter word lists (instant-start content for new families) -->
+    <section id="screen-starter-lists" class="screen">
+      <h2>⚡ Starter Word Lists</h2>
+      <p class="hint">Pick your child's grade to load a few ready-made weeks of spelling and vocabulary. You can practice right away, and still add your own lists any time.</p>
+      <div id="starter-list-grid" class="starter-grid"></div>
+      <button id="starter-lists-exit" class="btn btn-ghost">Back</button>
     </section>
 
     <!-- SCREEN: Week picker -->
@@ -137,7 +180,16 @@
       <h2 class="week-label" id="home-week-label">This Week's Words</h2>
       <p class="word-count" id="home-word-count">0 words</p>
       <p class="medal-summary hidden" id="home-medal-summary"></p>
+      <button id="btn-home-starter-lists" class="btn btn-primary hidden">⚡ Get Started with a Starter List</button>
       <button id="btn-change-week" class="btn btn-secondary change-week-btn">🔁 Change Week</button>
+
+      <div id="home-daily-goal" class="daily-goal hidden">
+        <div class="daily-goal-head">
+          <span id="daily-goal-label">Today's Goal</span>
+          <span id="daily-goal-count"></span>
+        </div>
+        <div class="daily-goal-track"><div id="daily-goal-fill" class="daily-goal-fill"></div></div>
+      </div>
 
       <div id="home-streak-banner" class="streak-banner hidden">
         <p id="streak-banner-text" class="streak-banner-text"></p>
@@ -168,6 +220,11 @@
         <button class="menu-card" data-nav="scramble">
           <span class="menu-icon">🔤</span>
           <span>Word Scramble</span>
+        </button>
+        <button class="menu-card menu-card-review" data-nav="review">
+          <span class="menu-icon">🧠</span>
+          <span>Smart Review</span>
+          <span class="menu-card-badge hidden" id="review-count-badge"></span>
         </button>
         <button class="menu-card" data-nav="progress">
           <span class="menu-icon">📊</span>
@@ -220,6 +277,31 @@
         <button id="spell-continue" class="btn btn-secondary hidden">Continue →</button>
       </div>
       <button id="spell-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
+    <!-- SCREEN: Smart Review (weakest words pulled from every week practiced) -->
+    <section id="screen-review" class="screen">
+      <div class="session-topbar">
+        <span id="review-progress">Word 1 of 1</span>
+        <span id="review-streak" class="streak-badge hidden">🔥 0</span>
+      </div>
+
+      <div class="practice-card">
+        <p class="practice-instruction">Listen, then spell the word.</p>
+        <p class="review-origin" id="review-origin"></p>
+        <button id="review-hear" class="btn btn-round">🔊 Hear It Again</button>
+
+        <div class="answer-row">
+          <input type="text" id="review-input" placeholder="Type the word here" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
+          <button id="review-mic" class="icon-btn mic-btn hidden" title="Speak your answer">🎤</button>
+        </div>
+
+        <button id="review-submit" class="btn btn-primary">Check</button>
+
+        <div id="review-feedback" class="feedback hidden"></div>
+        <button id="review-continue" class="btn btn-secondary hidden">Continue →</button>
+      </div>
+      <button id="review-exit" class="btn btn-ghost">Exit</button>
     </section>
 
     <!-- SCREEN: Vocab Practice -->
@@ -381,11 +463,28 @@
     <section id="screen-shop" class="screen">
       <h2>🛍️ Star Shop</h2>
       <p class="shop-lifetime" id="shop-lifetime"></p>
-      <p class="shop-section-title">Avatars</p>
+      <div id="shop-chase-section" class="hidden">
+        <p class="shop-section-title shop-chase-title">✨ Chase Avatars — Limited Time!</p>
+        <div id="shop-chase" class="shop-grid shop-grid-char"></div>
+      </div>
+      <p class="shop-section-title">Characters</p>
+      <div id="shop-characters" class="shop-grid shop-grid-char"></div>
+      <p class="shop-section-title">Emoji Avatars</p>
       <div id="shop-avatars" class="shop-grid"></div>
       <p class="shop-section-title">Themes</p>
       <div id="shop-themes" class="shop-grid"></div>
       <button id="shop-exit" class="btn btn-primary shop-back-btn">Back to Menu</button>
+    </section>
+
+    <!-- SCREEN: Manage Avatars (parent-only — reached via Parent Dashboard) -->
+    <section id="screen-manage-avatars" class="screen">
+      <h2>🎛️ Manage Avatars</h2>
+      <p class="hint">Turn characters on or off in the Star Shop and set what they cost. Changes apply to every kid in this household right away. Chase avatars are meant to be rotated — keep a couple on all the time and swap the rest in for a limited run.</p>
+      <p class="shop-section-title">✨ Chase (rotate these)</p>
+      <div id="manage-chase" class="manage-avatar-grid"></div>
+      <p class="shop-section-title">Characters</p>
+      <div id="manage-standard" class="manage-avatar-grid"></div>
+      <button id="manage-avatars-exit" class="btn btn-primary shop-back-btn">Back to Dashboard</button>
     </section>
 
   </main>
@@ -399,6 +498,7 @@
 <script src="js/firebase-config.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/shop-catalog.js"></script>
+<script src="js/starter-lists.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
