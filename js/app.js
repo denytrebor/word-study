@@ -2207,13 +2207,23 @@
     }
   }
 
+  // Creating a household doesn't connect+enter immediately — it drops the new
+  // code into the same password-type join field below and asks for one more
+  // tap. That extra tap is a real form submission with a filled password
+  // field, which is what gets the browser/iCloud Keychain to offer to save
+  // it — durable storage that survives Safari wiping this site's localStorage
+  // (the actual cause of "forgot the code" lockouts), unlike a toast alone.
   document.getElementById("btn-create-household").addEventListener("click", async () => {
     const btn = document.getElementById("btn-create-household");
     btn.disabled = true;
     try {
       const code = await Sync.createHousehold();
+      const input = document.getElementById("join-household-code");
+      input.value = code;
+      input.type = "text";
+      document.getElementById("household-code-hint").style.display = "";
+      document.getElementById("btn-toggle-household-code").setAttribute("aria-label", "Hide code");
       toast(`Household created! Code: ${code}`);
-      enterApp();
     } catch (e) {
       toast("Couldn't connect — check your internet and try again.");
     } finally {
@@ -2221,10 +2231,16 @@
     }
   });
 
-  document.getElementById("btn-join-household").addEventListener("click", async () => {
+  document.getElementById("join-household-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
     const input = document.getElementById("join-household-code");
     const code = input.value.trim();
     if (!code) { toast("Enter a code first"); return; }
+    // Force real password-field state at the moment of submission (it may
+    // have been toggled to "text" for visibility) — browsers key their
+    // save-password offer off the field being type="password" when the
+    // form submits, not just its autocomplete attribute.
+    input.type = "password";
     const btn = document.getElementById("btn-join-household");
     btn.disabled = true;
     try {
@@ -2237,8 +2253,13 @@
       btn.disabled = false;
     }
   });
-  document.getElementById("join-household-code").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") document.getElementById("btn-join-household").click();
+
+  document.getElementById("btn-toggle-household-code").addEventListener("click", () => {
+    const input = document.getElementById("join-household-code");
+    const btn = document.getElementById("btn-toggle-household-code");
+    const showing = input.type === "text";
+    input.type = showing ? "password" : "text";
+    btn.setAttribute("aria-label", showing ? "Show code" : "Hide code");
   });
 
   document.getElementById("btn-skip-household").addEventListener("click", () => {

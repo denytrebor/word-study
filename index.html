@@ -37,10 +37,13 @@
       <p class="subtitle">Connect this device to your family's shared list</p>
       <button id="btn-create-household" class="btn btn-primary">Create a New Household</button>
       <p class="hint" style="text-align:center;margin:18px 0 8px;">— or, if another device already made one —</p>
-      <div class="new-profile-form">
-        <input type="text" id="join-household-code" placeholder="Enter household code" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="characters" maxlength="6">
-        <button id="btn-join-household" class="btn btn-secondary">Join</button>
-      </div>
+      <p class="hint" id="household-code-hint" style="text-align:center;margin:0 0 8px;display:none;">Your code is filled in below — tap Join once to connect this device (and let your browser offer to remember it, so a wiped device can recover on its own).</p>
+      <form id="join-household-form" class="new-profile-form" autocomplete="on">
+        <input type="text" id="join-household-username" name="username" value="word-study-household" autocomplete="username" class="credential-username-field" tabindex="-1" aria-hidden="true">
+        <input type="password" id="join-household-code" name="password" placeholder="Enter household code" spellcheck="false" autocomplete="current-password" autocorrect="off" autocapitalize="characters" maxlength="6">
+        <button type="button" id="btn-toggle-household-code" class="btn btn-ghost" aria-label="Show code">👁️</button>
+        <button type="submit" id="btn-join-household" class="btn btn-secondary">Join</button>
+      </form>
       <button id="btn-skip-household" class="btn btn-ghost">Skip — just use this device</button>
     </section>
 
