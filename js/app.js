@@ -2540,6 +2540,7 @@
     scramble.locked = false;
     document.getElementById("scramble-feedback").classList.add("hidden");
     document.getElementById("scramble-continue").classList.add("hidden");
+    document.getElementById("scramble-submit").classList.add("hidden");
     renderScrambleTiles();
     speak(w.text);
   }
@@ -2579,13 +2580,22 @@
     if (idx === -1) return;
     scramble.answer[idx] = tileId;
     renderScrambleTiles();
-    if (!scramble.answer.includes(null)) checkScrambleAnswer();
+    updateScrambleSubmitVisibility();
   }
 
   function removeFromAnswer(slotIndex) {
     if (scramble.locked) return;
     scramble.answer[slotIndex] = null;
     renderScrambleTiles();
+    updateScrambleSubmitVisibility();
+  }
+
+  // Filling the last slot no longer auto-grades — kids (and their parents)
+  // asked for a chance to double-check/fix a slip before it's scored. The
+  // Submit button only appears once every slot is filled.
+  function updateScrambleSubmitVisibility() {
+    const canSubmit = !scramble.locked && !scramble.answer.includes(null);
+    document.getElementById("scramble-submit").classList.toggle("hidden", !canSubmit);
   }
 
   // A tap and a drag both end in the same place: release the tile and it
@@ -2620,6 +2630,7 @@
 
   function checkScrambleAnswer() {
     scramble.locked = true;
+    document.getElementById("scramble-submit").classList.add("hidden");
     const w = scramble.queue[scramble.index];
     const assembled = scramble.answer.map((tileId) => scramble.bank.find((t) => t.id === tileId).char).join("");
     const correct = assembled.toLowerCase() === w.text.trim().toLowerCase();
@@ -2643,6 +2654,10 @@
   }
 
   document.getElementById("scramble-hear").addEventListener("click", () => speak(scramble.queue[scramble.index].text));
+  document.getElementById("scramble-submit").addEventListener("click", () => {
+    if (scramble.locked || scramble.answer.includes(null)) return;
+    checkScrambleAnswer();
+  });
   document.getElementById("scramble-continue").addEventListener("click", () => {
     scramble.index++;
     if (scramble.index >= scramble.queue.length) {
