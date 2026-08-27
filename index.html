@@ -51,6 +51,9 @@
     <section id="screen-profiles" class="screen">
       <h1 class="app-title">📚 Word Study</h1>
       <p class="subtitle">Who's studying today?</p>
+      <div id="profile-search-wrap" class="hidden">
+        <input type="text" id="profile-search-input" placeholder="Search students…" spellcheck="false" autocomplete="off" autocorrect="off">
+      </div>
       <div id="profile-list" class="profile-grid"></div>
       <div id="parent-list" class="parent-row hidden"></div>
 
@@ -63,11 +66,21 @@
         </div>
       </div>
 
+      <div id="profile-confirm" class="parent-pin-entry hidden">
+        <span class="avatar profile-confirm-avatar" id="profile-confirm-avatar"></span>
+        <p class="hint">Is this you, <strong id="profile-confirm-name"></strong>?</p>
+        <div class="parent-pin-actions">
+          <button id="btn-profile-confirm-yes" class="btn btn-primary">Yes, this is me</button>
+          <button id="btn-profile-confirm-back" class="btn btn-ghost">Back</button>
+        </div>
+      </div>
+
       <div class="new-profile-form">
         <input type="text" id="new-profile-name" placeholder="Student's name" spellcheck="false" autocomplete="off" autocorrect="off">
         <input type="text" id="new-profile-grade" class="grade-field" placeholder="Grade" spellcheck="false" autocomplete="off" autocorrect="off">
         <button id="btn-add-profile" class="btn btn-primary">+ Add Student</button>
       </div>
+      <button id="btn-add-class-roster" class="btn btn-ghost add-parent-link">👥 Add a Class Roster</button>
 
       <button id="btn-show-add-parent" class="btn btn-ghost add-parent-link">👨‍👧 Add a parent</button>
       <div id="add-parent-form" class="new-profile-form hidden">
@@ -118,6 +131,30 @@
       <button id="btn-legal-back" class="btn btn-ghost">Back</button>
     </section>
 
+    <!-- SCREEN: Bulk class roster import -->
+    <section id="screen-class-roster" class="screen">
+      <h2>👥 Add a Class Roster</h2>
+      <p class="hint">Paste one student per line — just a name, or <code>Name, Grade</code> to set a grade for that student. Blank lines are skipped.</p>
+      <label class="hint roster-default-grade-label" for="roster-default-grade">Default grade for lines with no grade listed</label>
+      <input type="text" id="roster-default-grade" class="roster-default-grade-input" placeholder="e.g. 5" spellcheck="false" autocomplete="off" autocorrect="off">
+      <textarea id="roster-paste-input" rows="10" placeholder="Amelia Rivera, 5&#10;Jonah Park&#10;Priya Natarajan, 5" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+      <button id="btn-preview-roster" class="btn btn-secondary">Preview</button>
+      <div id="roster-preview" class="results-list hidden"></div>
+      <button id="btn-save-roster" class="btn btn-primary hidden">Add These Students</button>
+      <button id="class-roster-exit" class="btn btn-ghost">Back</button>
+    </section>
+
+    <!-- SCREEN: Class Info (the code, a QR code, and the invite link — always reachable) -->
+    <section id="screen-class-info" class="screen">
+      <h2>🏫 Class Info</h2>
+      <p class="hint">Post this where students can see it — anyone with this code can join this class.</p>
+      <p class="class-info-code" id="class-info-code-display"></p>
+      <div id="class-info-qr" class="class-info-qr"></div>
+      <button id="btn-copy-class-info-code" class="btn btn-secondary">Copy Code</button>
+      <button id="btn-copy-class-info-link" class="btn btn-ghost household-copy-btn">🔗 Copy invite link</button>
+      <button id="class-info-exit" class="btn btn-ghost">Back</button>
+    </section>
+
     <!-- SCREEN: Parent Dashboard (read-only) -->
     <section id="screen-parent-dashboard" class="screen">
       <div class="parent-dash-header">
@@ -125,10 +162,22 @@
         <div class="parent-dash-actions">
           <button id="parent-dash-refresh" class="btn btn-ghost">🔄 Refresh</button>
           <button id="parent-dash-manage-avatars" class="btn btn-ghost">🎛️ Manage Avatars</button>
+          <button id="parent-dash-school-overview" class="btn btn-ghost">🏫 School Overview</button>
           <button id="parent-dash-exit" class="btn btn-ghost">Exit</button>
         </div>
       </div>
       <div id="parent-dash-cards"></div>
+    </section>
+
+    <!-- SCREEN: School Overview (read-only, aggregate-only, cross-class — see docs/school-scale-plan.md Phase 3) -->
+    <section id="screen-school-overview" class="screen">
+      <h2>🏫 School Overview</h2>
+      <p class="hint">Aggregate counts only — no individual student names, avatars, or scores appear here.</p>
+      <div id="school-overview-rows"></div>
+      <p class="hint" style="margin-top:20px;">Watched classes (one per line: <code>CODE</code> or <code>CODE, Label</code>):</p>
+      <textarea id="school-watchlist-input" rows="4" placeholder="9S6NU3, Mrs. Park's Class&#10;7F2QRT, Grade 5" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+      <button id="btn-save-watchlist" class="btn btn-secondary">Save Watched Classes</button>
+      <button id="school-overview-exit" class="btn btn-ghost">Back</button>
     </section>
 
     <!-- SCREEN: Catalog connect (word lists live here, separate from household privacy) -->
@@ -145,11 +194,11 @@
     <!-- SCREEN: Catalog editor (bulk import a whole year) -->
     <section id="screen-catalog-editor" class="screen">
       <h2>📚 Manage Word Catalog</h2>
-      <p class="hint">Paste a whole year at once. Start each grade with a line like <code>GRADE 7 (starts 2026-09-01)</code>, then list words for each week — separate weeks with a blank line. Add a comma and a definition for vocab practice.</p>
+      <p class="hint">One shared catalog can hold every grade in a whole school side by side. Paste a whole year at once — start each grade with a line like <code>GRADE 7 (starts 2026-09-01)</code>, then list words for each week — separate weeks with a blank line. Add a comma and a definition for vocab practice. Paste as many <code>GRADE</code> blocks as you need in one go, one per grade.</p>
       <button id="btn-starter-lists-from-catalog" class="btn btn-secondary">⚡ Or load a ready-made starter list</button>
       <p class="hint catalog-readonly-note hidden" id="catalog-readonly-note"></p>
       <div id="catalog-editor-form">
-        <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 7 (starts 2026-09-01)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;friend&#10;habit, something you do often" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+        <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 3 (starts 2026-09-01)&#10;&#10;friend&#10;habit, something you do often&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;GRADE 7 (starts 2026-09-01)&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
         <button id="btn-preview-catalog" class="btn btn-secondary">Preview</button>
         <div id="catalog-preview" class="results-list hidden"></div>
         <button id="btn-save-catalog" class="btn btn-primary hidden">Save to Catalog</button>
@@ -499,6 +548,7 @@
 <script src="js/sync.js"></script>
 <script src="js/shop-catalog.js"></script>
 <script src="js/starter-lists.js"></script>
+<script src="js/vendor/qrcode.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

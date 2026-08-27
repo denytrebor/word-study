@@ -81,6 +81,24 @@ service cloud.firestore {
       }
     }
 
+    // Phase A student/class split (docs/phase-a-student-model-plan.md,
+    // 2026-08-27): a student's durable identity (stars, unlocks, streak,
+    // etc.) now lives here, top-level, keyed by the same id as its
+    // enrollment doc under households/{code}/profiles/{id}. The app only
+    // ever reaches a student doc by an id it already has (its own profile's
+    // id, or one being migrated) via .doc(id).get()/.set() — it never queries
+    // this collection — so this gets the SAME get-vs-list split as
+    // households/catalogs above, for the identical reason: allowing `list`
+    // here would let any signed-in anonymous client dump every student's
+    // name and stats across every household in the project in one query,
+    // the exact enumeration risk the households block exists to close.
+    match /students/{studentId} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn();
+      allow delete: if false;
+    }
+
     match /catalogs/{catalogCode} {
       allow get: if signedIn();
       allow list: if false;

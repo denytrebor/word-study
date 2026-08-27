@@ -125,25 +125,77 @@ const Sync = (function () {
     return col ? col.doc(profileId) : null;
   }
 
+  // Phase A split (docs/phase-a-student-model-plan.md, 2026-08-27): a
+  // student's durable identity — stars, unlocks, streak, etc. — now lives
+  // here, in a top-level collection keyed by the SAME id as its enrollment
+  // doc under households/{code}/profiles/{id}. That shared id is the only
+  // link between them; no separate foreign-key field is needed. This is what
+  // lets a student keep their rewards when they move to next year's class
+  // (a new enrollment doc, same studentId) instead of copying data forward
+  // by hand every year.
+  function studentRef(studentId) {
+    if (!db) return null;
+    return db.collection("students").doc(studentId);
+  }
+
+  // A profile created before this split still carries its reward fields
+  // directly on the enrollment doc (households/{code}/profiles/{id}) instead
+  // of a separate students/{id} doc. The first time such a profile is read
+  // after this shipped, copy those fields into a brand-new students/{id} doc
+  // — this is the ONLY write this function performs, and it only ever
+  // CREATES that new doc; the legacy enrollment doc is never touched, so its
+  // old fields just sit there unread forever (see the plan's additive-only
+  // rule).
+  //
+  // Deliberately has NO "already migrated this session" cache — an earlier
+  // version did, and it silently blanked a real student's stars/name/avatar
+  // to zero the moment the migration write failed once (e.g. Firestore rules
+  // not yet covering the new collection — exactly what happened in testing,
+  // see docs/phase-a-student-model-plan.md's Implementation Notes) and a
+  // LATER call for the same id trusted the cache, skipped recomputing from
+  // enrollmentData, and returned {} instead. Recomputing from enrollmentData
+  // on every call where the student doc doesn't exist costs one extra doc
+  // read (this isn't a hot path — once per profile per snapshot fire) and
+  // means a persistently-failing write degrades to "keeps retrying, keeps
+  // showing correct data" instead of "works once, then blanks."
+  async function migrateStudentIfNeeded(id, enrollmentData) {
+    const sRef = studentRef(id);
+    const sSnap = await sRef.get().catch(() => null);
+    if (sSnap && sSnap.exists) return sSnap.data();
+    const migrated = {
+      name: enrollmentData.name || "", avatar: enrollmentData.avatar || "",
+      stars: enrollmentData.stars || 0, currentStreak: enrollmentData.currentStreak || 0,
+      bestStreak: enrollmentData.bestStreak || 0, lastActiveDate: enrollmentData.lastActiveDate || "",
+      recentTests: enrollmentData.recentTests || [], unlocks: enrollmentData.unlocks || [],
+      equippedAvatar: enrollmentData.equippedAvatar || "", equippedTheme: enrollmentData.equippedTheme || "",
+      lifetimeStars: enrollmentData.lifetimeStars || 0,
+    };
+    sRef.set(migrated).catch(warnWriteFailed("student migration " + id));
+    return migrated;
+  }
+
   async function pushProfile(profile) {
     const ref = profileRef(profile.id);
     if (!ref || !(await ready)) return;
-    ref.set({
-      name: profile.name,
-      avatar: profile.avatar || "",
-      stars: profile.stars || 0,
-      grade: profile.grade || "",
-      currentStreak: profile.currentStreak || 0,
-      bestStreak: profile.bestStreak || 0,
-      lastActiveDate: profile.lastActiveDate || "",
-      recentTests: profile.recentTests || [],
-      unlocks: profile.unlocks || [],
-      equippedAvatar: profile.equippedAvatar || "",
-      equippedTheme: profile.equippedTheme || "",
-      lifetimeStars: profile.lifetimeStars || 0,
-      role: profile.role || "",
-      pin: profile.pin || "",
-    }, { merge: true }).catch(warnWriteFailed("profile " + profile.id));
+    if (profile.role === "parent") {
+      ref.set({ name: profile.name || "", role: "parent", pin: profile.pin || "" }, { merge: true })
+        .catch(warnWriteFailed("profile " + profile.id));
+      return;
+    }
+    // Enrollment doc is now THIN for students — just the class-scoped fields.
+    // merge:true only adds/overwrites these two named fields, so a legacy
+    // profile's old reward fields (stars, unlocks, etc. from before this
+    // split) are left sitting on the doc untouched, never stripped.
+    ref.set({ grade: profile.grade || "", role: "" }, { merge: true })
+      .catch(warnWriteFailed("enrollment " + profile.id));
+    const sRef = studentRef(profile.id);
+    sRef.set({
+      name: profile.name || "", avatar: profile.avatar || "", stars: profile.stars || 0,
+      currentStreak: profile.currentStreak || 0, bestStreak: profile.bestStreak || 0,
+      lastActiveDate: profile.lastActiveDate || "", recentTests: profile.recentTests || [],
+      unlocks: profile.unlocks || [], equippedAvatar: profile.equippedAvatar || "",
+      equippedTheme: profile.equippedTheme || "", lifetimeStars: profile.lifetimeStars || 0,
+    }, { merge: true }).catch(warnWriteFailed("student " + profile.id));
   }
 
   async function fetchHouseholdCatalogCode() {
@@ -157,36 +209,48 @@ const Sync = (function () {
     localStorage.setItem(CATALOG_KEY, code);
   }
 
+  // Enrollment doc stays the live listener (unchanged trigger — a class
+  // roster change is still what should re-render the profile picker).
+  // Student-role docs get merged in per-snapshot via migrateStudentIfNeeded,
+  // so callers (watchProfilesList() in app.js) see the exact same flat shape
+  // as before the split — zero changes needed upstream.
   function watchProfiles(onChange) {
     if (profilesUnsub) { profilesUnsub(); profilesUnsub = null; }
     const col = profilesRef();
     if (!col) return;
-    profilesUnsub = col.onSnapshot({ includeMetadataChanges: true }, (snap) => {
+    profilesUnsub = col.onSnapshot({ includeMetadataChanges: true }, async (snap) => {
       if (snap.metadata.hasPendingWrites) return;
-      const list = snap.docs.map((d) => ({
-        id: d.id,
-        name: d.data().name,
-        avatar: d.data().avatar,
-        stars: d.data().stars || 0,
-        grade: d.data().grade || "",
-        currentStreak: d.data().currentStreak || 0,
-        bestStreak: d.data().bestStreak || 0,
-        lastActiveDate: d.data().lastActiveDate || "",
-        recentTests: d.data().recentTests || [],
-        unlocks: d.data().unlocks || [],
-        equippedAvatar: d.data().equippedAvatar || "",
-        equippedTheme: d.data().equippedTheme || "",
-        lifetimeStars: d.data().lifetimeStars || 0,
-        role: d.data().role || "",
-        pin: d.data().pin || "",
+      const merged = await Promise.all(snap.docs.map(async (d) => {
+        const e = d.data();
+        if (e.role === "parent") {
+          return { id: d.id, name: e.name, role: "parent", pin: e.pin || "" };
+        }
+        const s = await migrateStudentIfNeeded(d.id, e);
+        return {
+          id: d.id, grade: e.grade || "", role: "",
+          name: s.name || "", avatar: s.avatar || "", stars: s.stars || 0,
+          currentStreak: s.currentStreak || 0, bestStreak: s.bestStreak || 0,
+          lastActiveDate: s.lastActiveDate || "", recentTests: s.recentTests || [],
+          unlocks: s.unlocks || [], equippedAvatar: s.equippedAvatar || "",
+          equippedTheme: s.equippedTheme || "", lifetimeStars: s.lifetimeStars || 0,
+        };
       }));
-      onChange(list);
+      onChange(merged);
     }, () => {});
   }
 
+  // The active profile's live-update listener now watches the STUDENT doc
+  // instead of the enrollment doc. Every field applyRemoteProfileUpdate() in
+  // app.js reads (stars, currentStreak, bestStreak, lastActiveDate,
+  // recentTests, unlocks, equippedAvatar, equippedTheme, lifetimeStars) is a
+  // student-doc field under this split, none are enrollment fields — so this
+  // is a one-line re-point with no changes needed in app.js. Grade changes
+  // don't get pushed live this way (grade already wasn't live-watched before
+  // this plan either), which is an accepted, unchanged limitation — a grade
+  // bump only takes effect via the enrollment listener in watchProfiles.
   function watchProfile(profileId, onChange) {
     if (profileUnsub) { profileUnsub(); profileUnsub = null; }
-    const ref = profileRef(profileId);
+    const ref = studentRef(profileId);
     if (!ref) return;
     profileUnsub = ref.onSnapshot({ includeMetadataChanges: true }, (snap) => {
       if (snap.metadata.hasPendingWrites || !snap.exists) return;
@@ -373,6 +437,49 @@ const Sync = (function () {
     }, () => {});
   }
 
+  /* -------------------------- School Overview --------------------------- */
+  // Read-only, arbitrary-code lookup for the principal's cross-class overview
+  // (docs/school-scale-plan.md Phase 3) — deliberately NOT scoped to
+  // getHouseholdCode(), since this reads OTHER households' data by code, one
+  // the caller is not connected to. Aggregation (which fields count as
+  // "practiced this week") is left to app.js, which already owns local-
+  // calendar-date math (todayLocalStr/localDateMinusDays) — duplicating that
+  // here would risk the exact toISOString()-style date bug HANDOFF.md already
+  // warns about. Same slash/length validation as catalogRef() for the same
+  // reason: a code is user-typed and must never be handed to .doc() unchecked.
+  async function fetchHouseholdProfiles(code) {
+    const clean = String(code || "").trim();
+    if (!/^[^/\\]{1,60}$/.test(clean)) return null;
+    if (!db || !(await ready)) return null;
+    try {
+      const snap = await db.collection("households").doc(clean).collection("profiles").get();
+      // School Overview's "practiced this week" reads lastActiveDate, which
+      // now lives on the student doc under the Phase A split — merge the
+      // same way watchProfiles() does, migrating any pre-split enrollment on
+      // the way (this is exactly the "arbitrary other household, read by
+      // code" path, so it hits profiles that may never have been opened in
+      // the merged shape before).
+      const merged = await Promise.all(snap.docs.map(async (d) => {
+        const e = d.data();
+        if (e.role === "parent") {
+          return { id: d.id, name: e.name, role: "parent", pin: e.pin || "" };
+        }
+        const s = await migrateStudentIfNeeded(d.id, e);
+        return {
+          id: d.id, grade: e.grade || "", role: "",
+          name: s.name || "", avatar: s.avatar || "", stars: s.stars || 0,
+          currentStreak: s.currentStreak || 0, bestStreak: s.bestStreak || 0,
+          lastActiveDate: s.lastActiveDate || "", recentTests: s.recentTests || [],
+          unlocks: s.unlocks || [], equippedAvatar: s.equippedAvatar || "",
+          equippedTheme: s.equippedTheme || "", lifetimeStars: s.lifetimeStars || 0,
+        };
+      }));
+      return merged;
+    } catch (e) {
+      return null;
+    }
+  }
+
   /* ------------------------------ Activity ------------------------------ */
   // One doc per (profile, local-calendar-date) — the source of truth for
   // streaks and the parent dashboard. Never watched live; read on demand.
@@ -420,5 +527,6 @@ const Sync = (function () {
     watchProgress,
     pushActivity,
     fetchActivityRange,
+    fetchHouseholdProfiles,
   };
 })();

@@ -243,7 +243,7 @@
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
     document.getElementById("screen-" + id).classList.add("active");
     const header = document.getElementById("app-header");
-    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal");
+    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal" || id === "class-roster" || id === "class-info" || id === "school-overview");
     window.scrollTo(0, 0);
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
@@ -667,19 +667,37 @@
    * ------------------------------------------------------------------- */
   const AVATARS = ["🦊", "🐨", "🐸", "🦁", "🐯", "🐼", "🦉", "🐢", "🐧", "🦄"];
 
+  // Above this many students, the plain creation-order grid (fine for a
+  // family of 2-4) stops being findable — render a search box and switch to
+  // alphabetical order instead. Not configurable on purpose (see
+  // docs/school-scale-plan.md §1.3): a threshold nobody will ever need to
+  // tune isn't worth a settings UI.
+  const PROFILE_SEARCH_THRESHOLD = 8;
+
   function renderProfiles() {
     const list = getProfiles();
     const students = list.filter((p) => p.role !== "parent");
     const parents = list.filter((p) => p.role === "parent");
 
+    const searchWrap = document.getElementById("profile-search-wrap");
+    const showSearch = students.length > PROFILE_SEARCH_THRESHOLD;
+    searchWrap.classList.toggle("hidden", !showSearch);
+    let visibleStudents = students;
+    if (showSearch) {
+      const q = document.getElementById("profile-search-input").value.trim().toLowerCase();
+      visibleStudents = students
+        .filter((p) => !q || p.name.toLowerCase().includes(q))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
     const wrap = document.getElementById("profile-list");
     wrap.innerHTML = "";
-    students.forEach((p) => {
+    visibleStudents.forEach((p) => {
       const btn = document.createElement("button");
       btn.className = "profile-card";
       const gradeLine = p.grade ? `<br><span style="font-weight:400;font-size:.75rem;color:var(--muted)">Grade ${escapeAttr(p.grade)}</span>` : "";
       btn.innerHTML = `<span class="avatar">${avatarHtml(p)}</span>${escapeAttr(p.name)}${gradeLine}`;
-      btn.addEventListener("click", () => selectProfile(p.id));
+      btn.addEventListener("click", () => handleProfileTap(p));
       wrap.appendChild(btn);
     });
 
@@ -697,15 +715,21 @@
     closeParentPinEntry();
     document.getElementById("add-parent-form").classList.add("hidden");
     document.getElementById("add-parent-hint").classList.add("hidden");
+    hideProfileConfirm();
 
     const code = typeof Sync !== "undefined" ? Sync.getHouseholdCode() : null;
     const info = document.getElementById("household-info");
     info.classList.remove("hidden");
     if (code) {
-      info.innerHTML = 'Household code: <strong id="household-code-display"></strong> <button id="btn-copy-household" class="btn btn-ghost household-copy-btn">Copy</button> <button id="btn-copy-household-link" class="btn btn-ghost household-copy-btn">🔗 Copy invite link</button>';
-      document.getElementById("household-code-display").textContent = code;
-      document.getElementById("btn-copy-household").addEventListener("click", () => copyToClipboard(code));
-      document.getElementById("btn-copy-household-link").addEventListener("click", () => copyToClipboard(inviteURL("household", code)));
+      // The actual code/QR/copy-link display moved to its own "Class Info"
+      // screen (docs/school-scale-plan.md §1.2) — a teacher needs to print
+      // this and put it on a wall, not read a one-line strip. This button is
+      // the persistent, ungated entry point to it: anyone viewing this screen
+      // already has the code's full access by definition, so gating the
+      // *display* of it specifically would add friction with no real
+      // security benefit.
+      info.innerHTML = '<button id="btn-open-class-info" class="btn btn-ghost household-copy-btn">🏫 Class Info</button>';
+      document.getElementById("btn-open-class-info").addEventListener("click", () => openClassInfo());
     } else if (typeof Sync !== "undefined") {
       info.innerHTML = '<button id="btn-open-household" class="btn btn-ghost household-copy-btn">🔗 Sync across devices</button>';
       document.getElementById("btn-open-household").addEventListener("click", () => showScreen("household"));
@@ -713,6 +737,33 @@
       info.classList.add("hidden");
     }
   }
+  document.getElementById("profile-search-input").addEventListener("input", () => renderProfiles());
+
+  // Mis-tap guard for a shared cart of classroom devices, not a security
+  // boundary — there is no secret to protect here, only an accident to
+  // prevent (docs/school-scale-plan.md §1.3). Only shown when the tapped
+  // profile differs from this device's cached ws_active_profile. On a 1:1
+  // device this never fires after the very first login: enterApp() auto-
+  // resumes straight past the picker screen once ws_active_profile is set,
+  // so this handler never even runs on later visits.
+  let pendingProfileConfirm = null;
+  function handleProfileTap(p) {
+    if (getActiveProfileId() === p.id) { selectProfile(p.id); return; }
+    pendingProfileConfirm = p;
+    document.getElementById("profile-confirm-avatar").innerHTML = avatarHtml(p);
+    document.getElementById("profile-confirm-name").textContent = p.name;
+    document.getElementById("profile-confirm").classList.remove("hidden");
+  }
+  function hideProfileConfirm() {
+    pendingProfileConfirm = null;
+    document.getElementById("profile-confirm").classList.add("hidden");
+  }
+  document.getElementById("btn-profile-confirm-yes").addEventListener("click", () => {
+    const p = pendingProfileConfirm;
+    hideProfileConfirm();
+    if (p) selectProfile(p.id);
+  });
+  document.getElementById("btn-profile-confirm-back").addEventListener("click", () => hideProfileConfirm());
 
   function watchProfilesList() {
     if (!firestoreReady()) return;
@@ -772,26 +823,150 @@
     await loadCatalogAndWeek();
   }
 
+  // Extracted so a bulk roster import (§1.1 of docs/school-scale-plan.md) can
+  // create many students in a loop without re-running the single-add click
+  // handler's "enter the app as this kid" side effect 20 times over.
+  // studentCount is recomputed fresh from getProfiles() on every call — not
+  // hoisted above a loop — so a bulk import still gets a nicely varied avatar
+  // rotation across all new students instead of the same one repeated.
+  function createStudentProfile(name, grade) {
+    const profiles = getProfiles();
+    const studentCount = profiles.filter((x) => x.role !== "parent").length;
+    const p = { id: uid(), name, avatar: AVATARS[studentCount % AVATARS.length], stars: 0, grade: grade || "" };
+    profiles.push(p);
+    saveProfiles(profiles);
+    if (firestoreReady()) Sync.pushProfile(p);
+    return p;
+  }
+
   document.getElementById("btn-add-profile").addEventListener("click", () => {
     const input = document.getElementById("new-profile-name");
     const gradeInput = document.getElementById("new-profile-grade");
     const name = input.value.trim();
     if (!name) { toast("Type a name first"); return; }
     const grade = gradeInput.value.trim();
-    const profiles = getProfiles();
-    const studentCount = profiles.filter((x) => x.role !== "parent").length;
-    const p = { id: uid(), name, avatar: AVATARS[studentCount % AVATARS.length], stars: 0, grade };
-    profiles.push(p);
-    saveProfiles(profiles);
+    const p = createStudentProfile(name, grade);
     input.value = "";
     gradeInput.value = "";
     renderProfiles();
-    if (firestoreReady()) Sync.pushProfile(p);
     selectProfile(p.id);
   });
   function addProfileOnEnter(e) { if (e.key === "Enter") document.getElementById("btn-add-profile").click(); }
   document.getElementById("new-profile-name").addEventListener("keydown", addProfileOnEnter);
   document.getElementById("new-profile-grade").addEventListener("keydown", addProfileOnEnter);
+
+  /* ---------------------------------------------------------------------
+   * BULK CLASS ROSTER IMPORT (docs/school-scale-plan.md §1.1)
+   * Mirrors the catalog editor's paste → preview → confirm shape for UX
+   * consistency with a workflow users of this app have already learned.
+   * ------------------------------------------------------------------- */
+  const ROSTER_NAME_MAX = 60;
+  const ROSTER_MAX_STUDENTS = 200;
+
+  function parseRosterText(text, defaultGrade) {
+    const rows = [];
+    text.split("\n").forEach((raw) => {
+      if (rows.length >= ROSTER_MAX_STUDENTS) return;
+      const line = raw.trim();
+      if (!line) return;
+      const idx = line.indexOf(",");
+      const name = (idx === -1 ? line : line.slice(0, idx)).trim().slice(0, ROSTER_NAME_MAX);
+      const grade = (idx === -1 ? "" : line.slice(idx + 1).trim()) || defaultGrade || "";
+      if (name) rows.push({ name, grade });
+    });
+    return rows;
+  }
+
+  let rosterParsePreview = [];
+
+  function openClassRoster() {
+    document.getElementById("roster-default-grade").value = "";
+    document.getElementById("roster-paste-input").value = "";
+    document.getElementById("roster-preview").classList.add("hidden");
+    document.getElementById("btn-save-roster").classList.add("hidden");
+    showScreen("class-roster");
+  }
+  document.getElementById("btn-add-class-roster").addEventListener("click", openClassRoster);
+  document.getElementById("class-roster-exit").addEventListener("click", () => { renderProfiles(); showScreen("profiles"); });
+
+  document.getElementById("btn-preview-roster").addEventListener("click", () => {
+    const text = document.getElementById("roster-paste-input").value;
+    const defaultGrade = document.getElementById("roster-default-grade").value.trim();
+    rosterParsePreview = parseRosterText(text, defaultGrade);
+    const box = document.getElementById("roster-preview");
+    if (!rosterParsePreview.length) {
+      box.innerHTML = '<p class="hint">Nothing parsed yet — paste one name per line.</p>';
+      box.classList.remove("hidden");
+      document.getElementById("btn-save-roster").classList.add("hidden");
+      return;
+    }
+    box.innerHTML = `<p class="hint">Will add ${rosterParsePreview.length} student${rosterParsePreview.length === 1 ? "" : "s"}:</p>` +
+      rosterParsePreview.map((r) => `<div class="result-row"><span>${escapeAttr(r.name)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${r.grade ? "Grade " + escapeAttr(r.grade) : "no grade"}</span></div>`).join("");
+    box.classList.remove("hidden");
+    document.getElementById("btn-save-roster").classList.remove("hidden");
+  });
+
+  // Loops createStudentProfile() (never the single click handler above) so
+  // this never tries to "enter the app" as each of N new students in
+  // sequence — one renderProfiles() + one toast at the end, then back to the
+  // profile grid so the teacher can see the class was created.
+  document.getElementById("btn-save-roster").addEventListener("click", () => {
+    const btn = document.getElementById("btn-save-roster");
+    btn.disabled = true;
+    const count = rosterParsePreview.length;
+    rosterParsePreview.forEach((r) => createStudentProfile(r.name, r.grade));
+    rosterParsePreview = [];
+    toast(`Added ${count} student${count === 1 ? "" : "s"}!`);
+    btn.disabled = false;
+    renderProfiles();
+    showScreen("profiles");
+  });
+
+  /* ---------------------------------------------------------------------
+   * CLASS INFO SCREEN (docs/school-scale-plan.md §1.2)
+   * The code/QR/copy-link display that used to live inline in the
+   * household-info strip on #screen-profiles now has its own screen — a
+   * teacher needs to print this and put it on the wall, not glance at a
+   * one-line hint. Reachable both from the profile picker's persistent
+   * "Class Info" button (see renderProfiles) and immediately after creating
+   * a household (see btn-create-household below).
+   * ------------------------------------------------------------------- */
+  let classInfoReturnTo = "profiles";
+
+  function renderClassInfoQR(url) {
+    const wrap = document.getElementById("class-info-qr");
+    wrap.innerHTML = "";
+    if (typeof QRCode === "undefined") { wrap.classList.add("hidden"); return; }
+    wrap.classList.remove("hidden");
+    try {
+      new QRCode(wrap, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+    } catch (e) { wrap.classList.add("hidden"); }
+  }
+
+  function openClassInfo() {
+    const code = typeof Sync !== "undefined" ? Sync.getHouseholdCode() : null;
+    if (!code) { toast("Create or join a household first"); return; }
+    // Right after creating a household, screen-household is still active (the
+    // teacher hasn't tapped "Join" yet — see btn-create-household) — send
+    // "Back" there instead of to the profile picker so that password-save
+    // flow isn't short-circuited by a detour through this screen.
+    classInfoReturnTo = (document.querySelector(".screen.active") || {}).id === "screen-household" ? "household" : "profiles";
+    document.getElementById("class-info-code-display").textContent = code;
+    renderClassInfoQR(inviteURL("household", code));
+    showScreen("class-info");
+  }
+  document.getElementById("btn-copy-class-info-code").addEventListener("click", () => {
+    const code = typeof Sync !== "undefined" ? Sync.getHouseholdCode() : null;
+    if (code) copyToClipboard(code);
+  });
+  document.getElementById("btn-copy-class-info-link").addEventListener("click", () => {
+    const code = typeof Sync !== "undefined" ? Sync.getHouseholdCode() : null;
+    if (code) copyToClipboard(inviteURL("household", code));
+  });
+  document.getElementById("class-info-exit").addEventListener("click", () => {
+    if (classInfoReturnTo === "profiles") renderProfiles();
+    showScreen(classInfoReturnTo);
+  });
 
   /* ---------------------------------------------------------------------
    * PARENT PROFILES (role:"parent" — child-proofing PIN, not security;
@@ -1047,6 +1222,86 @@
     // was in flight — don't clobber whatever screen is showing now.
     if (!state.parentProfile) return;
     wrap.innerHTML = results.map(renderStudentCard).join("");
+  }
+
+  /* ---------------------------------------------------------------------
+   * SCHOOL OVERVIEW (docs/school-scale-plan.md Phase 3)
+   * Read-only, aggregate-only, cross-class. Deliberately does NOT show any
+   * individual student's name, avatar, or score — only counts — because
+   * that's the whole reason a "class" is its own household in the first
+   * place (see the plan's "one decision everything else follows from").
+   * Reached from Parent Dashboard, the closest existing PIN-gated admin
+   * screen, since a principal viewing this is already past that gate.
+   * The watchlist (which class codes to show) is a local-only convenience —
+   * it lives on whichever device the principal uses for this, no new
+   * Firestore collection.
+   * ------------------------------------------------------------------- */
+  const SCHOOL_WATCHLIST_KEY = "ws_school_watchlist";
+  function getSchoolWatchlist() { return load(SCHOOL_WATCHLIST_KEY, []); }
+  function saveSchoolWatchlist(list) { save(SCHOOL_WATCHLIST_KEY, list); }
+
+  function parseWatchlistText(text) {
+    return text.split("\n")
+      .map((raw) => raw.trim())
+      .filter(Boolean)
+      .slice(0, 100)
+      .map((line) => {
+        const idx = line.indexOf(",");
+        const code = (idx === -1 ? line : line.slice(0, idx)).trim().slice(0, 60);
+        const label = (idx === -1 ? "" : line.slice(idx + 1).trim()).slice(0, 60);
+        return { code, label };
+      })
+      .filter((c) => c.code);
+  }
+
+  function openSchoolOverview() {
+    const list = getSchoolWatchlist();
+    document.getElementById("school-watchlist-input").value = list.map((c) => c.label ? `${c.code}, ${c.label}` : c.code).join("\n");
+    showScreen("school-overview");
+    loadSchoolOverview();
+  }
+  document.getElementById("parent-dash-school-overview").addEventListener("click", openSchoolOverview);
+  document.getElementById("school-overview-exit").addEventListener("click", () => openParentDashboard());
+
+  document.getElementById("btn-save-watchlist").addEventListener("click", () => {
+    saveSchoolWatchlist(parseWatchlistText(document.getElementById("school-watchlist-input").value));
+    toast("Saved!");
+    loadSchoolOverview();
+  });
+
+  // "Practiced this week" is read directly off each profile's own
+  // lastActiveDate field (already written by the existing streak logic,
+  // recordDailyStreak) rather than pulling every profile's daily activity
+  // docs — one Firestore read per watched class regardless of its student
+  // count, instead of one per student. Cheaper, and the plan's own capacity
+  // math (Firestore Spark's daily caps) is exactly why that cost matters
+  // more here than it does for a single household's own dashboard.
+  async function loadSchoolOverview() {
+    const list = getSchoolWatchlist();
+    const wrap = document.getElementById("school-overview-rows");
+    if (!list.length) {
+      wrap.innerHTML = '<p class="hint">No classes watched yet — add class codes below.</p>';
+      return;
+    }
+    wrap.innerHTML = list.map((c) => `<div class="school-overview-row"><span class="school-overview-label">${escapeAttr(c.label || c.code)}</span><span class="school-overview-stats psc-loading">Loading…</span></div>`).join("");
+
+    const cutoff = localDateMinusDays(todayLocalStr(), 6);
+    const results = await Promise.all(list.map(async (c) => {
+      let profiles = null;
+      if (typeof Sync !== "undefined") {
+        try { profiles = await Sync.fetchHouseholdProfiles(c.code); } catch (e) { profiles = null; }
+      }
+      return { c, profiles };
+    }));
+
+    wrap.innerHTML = results.map(({ c, profiles }) => {
+      if (!profiles) {
+        return `<div class="school-overview-row"><span class="school-overview-label">${escapeAttr(c.label || c.code)}</span><span class="school-overview-stats">Couldn't load</span></div>`;
+      }
+      const students = profiles.filter((p) => (p.role || "") !== "parent");
+      const active = students.filter((p) => p.lastActiveDate && p.lastActiveDate >= cutoff).length;
+      return `<div class="school-overview-row"><span class="school-overview-label">${escapeAttr(c.label || c.code)}</span><span class="school-overview-stats">${students.length} student${students.length === 1 ? "" : "s"} · ${active} of ${students.length} practiced this week</span></div>`;
+    }).join("");
   }
 
   document.getElementById("btn-switch-profile").addEventListener("click", () => {
@@ -2817,6 +3072,11 @@
       document.getElementById("household-code-hint").style.display = "";
       document.getElementById("btn-toggle-household-code").setAttribute("aria-label", "Hide code");
       toast(`Household created! Code: ${code}`);
+      // A teacher creating a class needs the code/QR/invite-link at the exact
+      // moment they most need it, not buried behind navigation
+      // (docs/school-scale-plan.md §1.2). openClassInfo() sends "Back" to
+      // this same screen so the join-tap password-save flow below still works.
+      openClassInfo();
     } catch (e) {
       toast("Couldn't connect — check your internet and try again.");
     } finally {

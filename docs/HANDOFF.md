@@ -540,6 +540,182 @@ week with an earlier start date, not appended after List 10.
   (dump each week's first vocab word + first/last spelling word, eyeball
   against source) before calling an import done.
 
+## Student/Class split — Phase A of long-term identity model (2026-08-27, LIVE)
+
+Full design reasoning in `docs/long-term-architecture.md`; implementation
+plan (with current status) in `docs/phase-a-student-model-plan.md`. Short
+version: a student's durable identity — stars, `lifetimeStars`, unlocks,
+streaks, equipped avatar/theme, `recentTests` — now lives in a new top-level
+`students/{id}` collection instead of on `households/{code}/profiles/{id}`.
+The household/profile doc becomes a thin per-class enrollment record (just
+`grade` for a student-role entry). Both share the same document id, so a
+student moving to next year's class is just a new thin enrollment doc
+pointing at the same `students/{id}` — no data copy, which is the whole
+point: this is the fix for "how do a kid's rewards follow them to a new
+class" raised during the school-scale conversation. Parent-role profiles are
+completely unchanged (no rewards/history to decouple). `progress`/`activity`
+subcollections deliberately stay where they are — out of scope for this
+pass, a separate future migration if ever wanted.
+
+`js/app.js` needed zero changes — every place it reads `state.profile.X`
+still sees the same flat shape it always has. Only `js/sync.js` knows the
+data now lives in two documents; it merges on read
+(`migrateStudentIfNeeded()`) and splits on write (`pushProfile()`). Existing
+real profiles migrate themselves automatically and losslessly the first
+time they're loaded after this ships — no manual script, no console
+surgery — by copying whatever reward fields are still sitting on the old
+profile doc into a new student doc. **Additive only, by design**: the
+migration never mutates or strips the old doc, so even if something goes
+wrong, nothing that already existed is at risk — worth preserving as the
+standing principle for any future migration this app does.
+
+**Live and verified against real production Firestore (2026-08-27).**
+`docs/firestore.rules` (which includes a `students` block, denying `list`
+for the same enumeration-risk reason `households`/`catalogs` already do)
+was applied via Firebase console → Firestore Database → Rules → Publish.
+The architect re-verified the full feature afterward end-to-end against
+real Firestore, throwaway households only, never `9S6NU3`/`zoelive`:
+`students/{id}` reachable and correctly `list`-denied; a legacy-shape
+profile migrates itself on load with nothing blanked; a real purchase
+persists correctly to the student doc; the original enrollment doc stays
+byte-for-byte untouched afterward; and — the scenario this whole feature
+exists for — a second, unrelated household seeded with nothing but a bare
+`{grade, role}` pointer correctly showed that student's full stars/avatar,
+carried over from the shared record alone. Parent PIN flow and School
+Overview confirmed unaffected. Zero console errors.
+
+**A real bug was found and fixed during this pass, before any of the above
+verification**: the original design for `migrateStudentIfNeeded()` cached
+"already migrated this session" per id, and if the underlying write had
+ever failed (which it reliably did before the rules were applied), a second
+call for the same id would trust that stale cache, skip recomputing, and
+return an empty object — blanking a real student's stars/name/avatar to
+zero in the UI and, after a reload, in `localStorage` too. Fixed by removing
+the cache entirely: the function now always re-derives from the enrollment
+doc's data when the student doc doesn't exist, on every call, so a
+persistently-failing write degrades to "keeps showing the correct data,
+keeps harmlessly retrying" instead of "correct once, then blanks." Proved
+against the exact failure scenario (a write that always throws
+`permission-denied`, called repeatedly for the same id) before the rules
+were even applied — this is why the feature was safe to leave in the repo
+during the gap between shipping the code and applying the rules.
+
+## Scaling to a school (shipped 2026-08-26, per `docs/school-scale-plan.md`)
+
+The user's wife, a small K-12 school's principal, wanted to offer Word Study
+to the school (~60 students, grades 2-12). Full plan and reasoning in
+`docs/school-scale-plan.md`; this section is the current-state summary.
+
+**A "class" is a `households/{code}` document, unchanged** — the load-bearing
+decision everything else follows from. Rejected one household for the whole
+school (every family would see every other family's kids on the shared
+profile picker before any PIN — student profiles have no PIN) and one
+household per student (privacy-perfect but 60 codes to generate/lose/recover
+instead of one per class). A class of ~15-25 kids who already sit in the same
+room, with a teacher who can post one code on the wall like a wifi password,
+bounds the privacy blast radius to "classmates" (already a normal visibility
+level) and turns "60 codes to lose" into "a handful of classes to lose." This
+is a recommendation conveyed to the school, not something the app enforces —
+nothing stops a household-per-family setup instead if that fits better.
+
+**Bulk class roster import** (`#screen-class-roster`, reached via "👥 Add a
+Class Roster" on the profile picker) lets a teacher paste a whole roster —
+one student per line, `Name` or `Name, Grade`, with a single "default grade"
+field for lines that omit one — instead of adding 20 kids one at a time.
+Mirrors the catalog editor's paste → preview → confirm shape. `btn-add-profile`'s
+single-add handler was refactored to extract `createStudentProfile(name, grade)`
+so the bulk-import loop calls that directly rather than the full click
+handler, which used to `selectProfile()` immediately after creating — fine
+for a parent adding one kid, wrong for a teacher adding 20 (it would "enter"
+the app as each of 20 kids in sequence). Same defensive caps as
+`parseCatalogText()`: 60 chars/name, 200 students/paste.
+
+**Class Info screen** (`#screen-class-info`, "🏫 Class Info") pulled the
+code/copy-link display out of the small inline strip on the profile picker
+into its own screen a teacher can put on a wall — big code, a QR code, and
+the existing Copy/Copy-invite-link buttons. Reachable both immediately after
+creating a household (before the existing join-tap password-save flow even
+runs — `openClassInfo()` tracks whether it was opened from the household
+screen and sends "Back" there instead of to the profile picker, so that flow
+isn't short-circuited) and as a persistent, ungated button on the profile
+picker whenever a household code exists (ungated deliberately: anyone
+viewing that screen already has the code's full access, so gating the
+*display* of it adds friction with no real security benefit).
+
+The QR encodes `inviteURL("household", code)` via a vendored local QR
+encoder, `js/vendor/qrcode.js` (the well-known kazuhikoarase MIT-licensed
+implementation, fetched once from its GitHub source — no CDN `<script>` tag,
+no hand-rolled Reed-Solomon math). Verified independently, not just
+eyeballed: pulled the actual boolean module matrix out of a live `QRCode`
+instance and decoded it with `jsQR` (an unrelated decoder), which read back
+the exact invite URL.
+
+**Profile grid at class scale**: `renderProfiles()` now shows a live
+search/filter box and switches to alphabetical order once a household has
+more than 8 students (not configurable — a threshold nobody will ever need
+to tune isn't worth a settings UI); below that, renders exactly as before
+with zero visual change for the family case. Tapping a profile that doesn't
+match this device's cached `ws_active_profile` shows a brief "is this you?"
+interstitial first — a mis-tap guard for a shared classroom device cart, not
+a security boundary (no PIN, no real gate — that would contradict the whole
+"kids just tap their name" design). On a 1:1 device this never shows after
+the first login, because `enterApp()`'s existing auto-resume bypasses the
+picker screen entirely once `ws_active_profile` is set.
+
+**School-wide word delivery** needed no new logic — `catalogs/{code}` already
+lets one shared catalog hold every grade's weeks side by side, and
+`computeAutoWeek()` already filters by each profile's own grade. The
+recommended workflow (stated for a principal, not a developer): pick one
+memorable catalog code for the whole school, every class connects to it once
+via Manage Word Catalog, whoever manages curriculum pastes their grade's
+weeks into that one shared catalog, and every enrolled kid in every class
+sees their own grade's current week automatically. If two teachers ever edit
+the same grade's same week at the same time, the more recent save wins
+(existing `mergeWeeks()` behavior, not new). The catalog editor's placeholder
+text and hint now show a 3-grade paste example to make this obvious at a
+glance rather than looking like a one-grade-at-a-time tool.
+
+**School Overview dashboard** (`#screen-school-overview`, "🏫 School
+Overview" button on the Parent Dashboard) gives a principal a bird's-eye view
+across every class without visiting each household's dashboard separately.
+Deliberately **read-only, aggregate-only, and privacy-preserving by
+construction** — it never shows an individual student's name, avatar, or
+score, only per-class counts, so it can't reopen the privacy problem the
+class-per-household decision above exists to avoid. A local-only "watchlist"
+of class codes + labels (`ws_school_watchlist` in `localStorage`, managed by
+pasting a small `CODE, Label` list) lives only on whichever device the
+principal uses for this; one new read-only `Sync.fetchHouseholdProfiles(code)`
+reads an arbitrary household's `profiles` subcollection (same slash/length
+validation as `connectCatalog()`, since it's user-typed and handed to
+`.doc()`). "Practiced this week" is computed from each profile's existing
+`lastActiveDate` field rather than pulling every student's daily activity
+docs — one Firestore read per watched *class* regardless of roster size,
+not one per student, which matters more at school scale than it did for a
+single household's own dashboard.
+
+**Capacity**: Firestore Spark's free-tier caps (50k reads/day, 20k
+writes/day) comfortably cover this school's actual scale even under a
+generous estimate (all 60 kids practicing twice a day, ~30 ops/session ≈
+3,600 ops/day) — no paid plan needed. `docs/firestore.rules` was applied by
+the user on 2026-08-27 (originally flagged in the 2026-08-26 security review
+as should-do-before-enrolling-real-kids at school scale, since multiple
+unrelated families' children's data now shares the project) — **enabling
+Firebase App Check is still outstanding**, same category of action, not yet
+done. Likewise, school enrollment of *other* families' children may need the
+school's own data-privacy-agreement process; the current `#screen-legal`
+page was written for one family's own kids and wasn't rewritten for a
+school context, which is a judgment call for the principal, not something
+to draft unprompted.
+
+**Not built (Phase 4, nice-to-have, explicitly optional in the plan)**: a
+single whole-school "N words practiced together" fun counter. Skipped
+because computing it accurately would need reading every student's progress
+subcollection across every watched class (no field already read by the
+School Overview aggregate maps to a real word-attempt count — `lifetimeStars`
+is stars, not words, and is itself parent-adjustable via Manage Avatars
+pricing), which is exactly the more-expensive new data path the plan's own
+text for this phase said to avoid rather than invent for a nice-to-have.
+
 ## Login/recovery UX (shipped 2026-08-25)
 
 **Problem**: the household code is the only way back in on a device — there
