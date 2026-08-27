@@ -782,6 +782,7 @@
     if (typeof data.lastActiveDate === "string" && data.lastActiveDate !== state.profile.lastActiveDate) fields.lastActiveDate = data.lastActiveDate;
     if (Array.isArray(data.recentTests) && JSON.stringify(data.recentTests) !== JSON.stringify(state.profile.recentTests)) fields.recentTests = data.recentTests;
     if (Array.isArray(data.unlocks) && JSON.stringify(data.unlocks) !== JSON.stringify(state.profile.unlocks)) fields.unlocks = data.unlocks;
+    if (data.unlockDates && typeof data.unlockDates === "object" && JSON.stringify(data.unlockDates) !== JSON.stringify(state.profile.unlockDates)) fields.unlockDates = data.unlockDates;
     if (typeof data.equippedAvatar === "string" && data.equippedAvatar !== state.profile.equippedAvatar) fields.equippedAvatar = data.equippedAvatar;
     if (typeof data.equippedTheme === "string" && data.equippedTheme !== state.profile.equippedTheme) fields.equippedTheme = data.equippedTheme;
     if (typeof data.lifetimeStars === "number" && data.lifetimeStars !== state.profile.lifetimeStars) fields.lifetimeStars = data.lifetimeStars;
@@ -2971,6 +2972,14 @@
     p.stars -= price;
     p.unlocks = p.unlocks || [];
     p.unlocks.push(unlockId);
+    // Purely additive, never a migration: existing unlocks simply have no
+    // entry here and that's fine everywhere this is read. Captured now,
+    // while it's free, for whenever a "your collection over time" view gets
+    // built later — the data is worthless in hindsight if not recorded when
+    // the purchase actually happens. Local-calendar date, not toISOString()
+    // (see the known bug pattern in docs/HANDOFF.md).
+    p.unlockDates = p.unlockDates || {};
+    p.unlockDates[unlockId] = todayLocalStr();
     if (kind === "avatar" || kind === "char") p.equippedAvatar = avatarValue(item);
     else p.equippedTheme = item.id;
     persistProfile();

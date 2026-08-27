@@ -600,6 +600,22 @@ against the exact failure scenario (a write that always throws
 were even applied — this is why the feature was safe to leave in the repo
 during the gap between shipping the code and applying the rules.
 
+**Small follow-up the same day: `unlockDates` (when each avatar/theme was
+earned).** A `long-term-architecture.md` idea ("legacy avatars" — showing
+*when* something was earned, not just that it's still owned) that's cheap
+now that profiles are durable. Purely additive: `buyItem()` in `app.js`
+stamps `p.unlockDates[unlockId]` with the local-calendar purchase date
+alongside the existing `p.unlocks` push; threaded through the same three
+`sync.js` spots that already carry `unlocks` (`pushProfile`,
+`migrateStudentIfNeeded`, `watchProfiles`'s merge — deliberately NOT added
+to `fetchHouseholdProfiles`, since School Overview never surfaces individual
+data and has no use for it). No migration: every read is `|| {}`-guarded, so
+existing unlocks with no entry just have no date, forever, which is exactly
+correct — that information was never captured and can't be reconstructed.
+No UI surfaces this yet (deliberately out of scope for this pass — there's
+no "your collection" view to put it in); this is instrumentation for
+whenever that gets built, not a finished user-facing feature.
+
 ## Scaling to a school (shipped 2026-08-26, per `docs/school-scale-plan.md`)
 
 The user's wife, a small K-12 school's principal, wanted to offer Word Study

@@ -167,6 +167,7 @@ const Sync = (function () {
       stars: enrollmentData.stars || 0, currentStreak: enrollmentData.currentStreak || 0,
       bestStreak: enrollmentData.bestStreak || 0, lastActiveDate: enrollmentData.lastActiveDate || "",
       recentTests: enrollmentData.recentTests || [], unlocks: enrollmentData.unlocks || [],
+      unlockDates: enrollmentData.unlockDates || {},
       equippedAvatar: enrollmentData.equippedAvatar || "", equippedTheme: enrollmentData.equippedTheme || "",
       lifetimeStars: enrollmentData.lifetimeStars || 0,
     };
@@ -193,7 +194,8 @@ const Sync = (function () {
       name: profile.name || "", avatar: profile.avatar || "", stars: profile.stars || 0,
       currentStreak: profile.currentStreak || 0, bestStreak: profile.bestStreak || 0,
       lastActiveDate: profile.lastActiveDate || "", recentTests: profile.recentTests || [],
-      unlocks: profile.unlocks || [], equippedAvatar: profile.equippedAvatar || "",
+      unlocks: profile.unlocks || [], unlockDates: profile.unlockDates || {},
+      equippedAvatar: profile.equippedAvatar || "",
       equippedTheme: profile.equippedTheme || "", lifetimeStars: profile.lifetimeStars || 0,
     }, { merge: true }).catch(warnWriteFailed("student " + profile.id));
   }
@@ -231,7 +233,7 @@ const Sync = (function () {
           name: s.name || "", avatar: s.avatar || "", stars: s.stars || 0,
           currentStreak: s.currentStreak || 0, bestStreak: s.bestStreak || 0,
           lastActiveDate: s.lastActiveDate || "", recentTests: s.recentTests || [],
-          unlocks: s.unlocks || [], equippedAvatar: s.equippedAvatar || "",
+          unlocks: s.unlocks || [], unlockDates: s.unlockDates || {}, equippedAvatar: s.equippedAvatar || "",
           equippedTheme: s.equippedTheme || "", lifetimeStars: s.lifetimeStars || 0,
         };
       }));
