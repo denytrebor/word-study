@@ -264,6 +264,8 @@
     document.getElementById("screen-" + id).classList.add("active");
     const header = document.getElementById("app-header");
     header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal" || id === "class-roster" || id === "class-info" || id === "school-overview");
+    endRetype();
+    clearBuddy();
     window.scrollTo(0, 0);
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
@@ -426,7 +428,7 @@
     document.removeEventListener("pointerdown", unlockAudioOnce);
   }, { once: true });
 
-  // kind: "correct" | "medal" | "purchase" | "streak" | "perfect" —
+  // kind: "correct" | "medal" | "purchase" | "streak" | "perfect" | "lockin" —
   // a subtle single tone for plain correct answers, a two-note ascending
   // chime for medal/purchase moments, a brighter three-note arpeggio for
   // the big streak/perfect moments.
@@ -450,6 +452,12 @@
     }
     if (kind === "correct") {
       tone(660, 0, 0.12, 0.12);
+    } else if (kind === "lockin") {
+      // Deliberately warmer and lower than "correct": a retype is a repair, not a
+      // hit, and giving it the same tone as a first-try correct answer would make
+      // the two indistinguishable to a kid who is only listening.
+      tone(493.88, 0, 0.12, 0.13);
+      tone(659.25, 0.1, 0.18, 0.13);
     } else if (kind === "medal") {
       tone(523.25, 0, 0.14, 0.2);
       tone(783.99, 0.1, 0.18, 0.2);
@@ -465,6 +473,40 @@
       tone(830.61, 0.09, 0.12, 0.22, "triangle");
       tone(1046.5, 0.18, 0.24, 0.22, "triangle");
     }
+  }
+
+  // PRACTICE BUDDY — the equipped avatar reacts in the header to the moments the
+  // reward system is already firing for. Every call site sits NEXT TO an existing
+  // celebrate()/playSound() call rather than replacing one, so this stays additive
+  // instrumentation on a trigger point that is already correct instead of a second
+  // decision tree that could disagree with the first one about what just happened.
+  // Purely visual, so deliberately NOT gated by isMuted(): mute is an audio
+  // setting, and freezing the avatar because the room needs quiet would be a
+  // surprise. Motion preferences are handled in CSS instead.
+  const BUDDY_CLASSES = { correct: "buddy-nod", cheer: "buddy-cheer", miss: "buddy-wobble" };
+  const BUDDY_CLEAR_MS = 1000; // longer than the longest keyframe (buddy-cheer, 0.9s)
+  let buddyTimer = null;
+
+  function reactBuddy(kind) {
+    const el = document.getElementById("header-avatar");
+    const cls = BUDDY_CLASSES[kind];
+    if (!el || !cls) return;
+    clearBuddy();
+    // Re-adding a class the element just had does not restart a CSS animation
+    // until the browser has actually recalculated layout without it, so a run of
+    // fast correct answers would bounce once and then go still.
+    void el.offsetWidth;
+    el.classList.add(cls);
+    buddyTimer = setTimeout(() => el.classList.remove(cls), BUDDY_CLEAR_MS);
+  }
+
+  // Called from showScreen() too: an animation still running when the child
+  // leaves a session would otherwise ride into the next screen on a header that
+  // never re-renders on navigation.
+  function clearBuddy() {
+    const el = document.getElementById("header-avatar");
+    clearTimeout(buddyTimer);
+    if (el) el.classList.remove("buddy-nod", "buddy-cheer", "buddy-wobble");
   }
 
   /* ---------------------------------------------------------------------
@@ -597,6 +639,7 @@
       toast(`🔥 ${newStreak}-day streak! +${bonus} ⭐`);
       celebrate("big");
       playSound("streak");
+      reactBuddy("cheer");
     }
   }
 
@@ -643,8 +686,8 @@
         activity.starsEarned += starsAwarded;
         activity.starEarns[w.id] = (activity.starEarns[w.id] || 0) + starsAwarded;
       }
-      if (!silent) playSound("correct");
-    }
+      if (!silent) { playSound("correct"); reactBuddy("correct"); }
+    } else if (!silent) reactBuddy("miss");
 
     const medalUp = MEDAL_RANK[afterMedal] > MEDAL_RANK[beforeMedal];
     if (medalUp && !silent) {
@@ -652,6 +695,7 @@
       toast(`${MEDAL_ICON[afterMedal]} "${w.text}" leveled up to ${label}!`);
       celebrate("small");
       playSound("medal");
+      reactBuddy("cheer");
     }
 
     if (isFirstAnswerToday) {
@@ -681,6 +725,7 @@
       toast("🌟 Perfect round! +5 ⭐");
       celebrate("big");
       playSound("perfect");
+      reactBuddy("cheer");
       return true;
     }
     if (session.round === 2 && !session.missedThisRound) {
@@ -688,6 +733,7 @@
       toast("💪 Cleared the retries! +2 ⭐");
       celebrate("small");
       playSound("perfect");
+      reactBuddy("cheer");
       return true;
     }
     return false;
@@ -1873,7 +1919,84 @@
     toast(`🎯 Daily goal reached! +${DAILY_GOAL_BONUS} ⭐`);
     celebrate("big");
     playSound("medal");
+    reactBuddy("cheer");
     flushActivity();
+  }
+
+  /* ---------------------------------------------------------------------
+   * "LOCK IT IN" RETYPE GATE
+   * Spelling Practice and Smart Review are the only two modes where the answer
+   * IS the spelling the child typed, so they are the only two where writing the
+   * word once more is the same act as the thing being practiced. On a miss the
+   * Continue button stays hidden until the word has been typed correctly once —
+   * framed as locking the spelling in, never as a penalty.
+   *
+   * Both modes drive this through an id prefix ("spell" / "review") because
+   * their submit handlers are duplicated code rather than a shared helper;
+   * routing the gate through one object here keeps the two from drifting apart
+   * the way the handlers themselves already have.
+   *
+   * The retype is never reported to recordAnswer(): the miss was already
+   * recorded, and a second call would double-count the attempt, re-enter the
+   * star economy, and could even hand out a medal-up for the word the child
+   * just got wrong.
+   * ------------------------------------------------------------------- */
+  let retype = { active: false, prefix: "", target: "" };
+
+  function beginRetype(prefix, wordText) {
+    retype = { active: true, prefix, target: wordText.trim().toLowerCase() };
+    const input = document.getElementById(prefix + "-input");
+    const submit = document.getElementById(prefix + "-submit");
+    input.value = "";
+    input.disabled = false;
+    submit.textContent = "Lock It In";
+    submit.classList.remove("hidden");
+    document.getElementById(prefix + "-continue").classList.add("hidden");
+    input.focus();
+  }
+
+  // Called by the submit handlers before they grade anything. Returns true when
+  // it consumed the click, so the caller knows not to fall through into scoring
+  // a retype as if it were a fresh attempt at the word.
+  function handleRetypeSubmit() {
+    if (!retype.active) return false;
+    const prefix = retype.prefix;
+    const input = document.getElementById(prefix + "-input");
+    const answer = input.value.trim();
+    if (!answer) { input.focus(); return true; }
+    if (answer.toLowerCase() !== retype.target) {
+      // No message and no sound on a wrong retype — the correct spelling is
+      // still displayed directly above the input, so anything written here
+      // would only be repeating what they can already see, in a scolding tone.
+      input.value = "";
+      input.classList.remove("input-shake");
+      void input.offsetWidth; // restart the animation; without the reflow a second miss in a row would not shake
+      input.classList.add("input-shake");
+      setTimeout(() => input.classList.remove("input-shake"), 400);
+      input.focus();
+      return true;
+    }
+    const feedback = document.getElementById(prefix + "-feedback");
+    feedback.className = "feedback correct";
+    feedback.textContent = "🔒 Got it — nice job locking that in!";
+    input.disabled = true;
+    document.getElementById(prefix + "-continue").classList.remove("hidden");
+    playSound("lockin");
+    reactBuddy("correct");
+    endRetype();
+    return true;
+  }
+
+  // Restores the submit button to its normal label for whichever mode was
+  // mid-retype. Called from showScreen() as well, so that bailing out through
+  // the header Home button (which skips both exit handlers) can never leave a
+  // "Lock It In" button waiting for the next session.
+  function endRetype() {
+    if (retype.prefix) {
+      const submit = document.getElementById(retype.prefix + "-submit");
+      if (submit) submit.textContent = "Check";
+    }
+    retype = { active: false, prefix: "", target: "" };
   }
 
   /* ---------------------------------------------------------------------
@@ -1982,6 +2105,7 @@
   }
 
   document.getElementById("review-submit").addEventListener("click", () => {
+    if (handleRetypeSubmit()) return;
     const item = reviewSession.queue[reviewSession.index];
     const answer = document.getElementById("review-input").value.trim();
     const correct = answer.toLowerCase() === item.word.text.trim().toLowerCase();
@@ -1994,13 +2118,17 @@
     } else {
       reviewSession.streak = 0;
       feedback.className = "feedback incorrect";
-      feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(item.word.text)}</span>`;
+      feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(item.word.text)}</span><span class="retype-prompt">Now type it once to lock it in 🔒</span>`;
     }
     updateStreakBadge(document.getElementById("review-streak"), reviewSession.streak);
     feedback.classList.remove("hidden");
-    document.getElementById("review-input").disabled = true;
-    document.getElementById("review-submit").classList.add("hidden");
-    document.getElementById("review-continue").classList.remove("hidden");
+    if (correct) {
+      document.getElementById("review-input").disabled = true;
+      document.getElementById("review-submit").classList.add("hidden");
+      document.getElementById("review-continue").classList.remove("hidden");
+    } else {
+      beginRetype("review", item.word.text);
+    }
     saveReviewDoc(item.weekId);
   });
 
@@ -2231,6 +2359,7 @@
   }
 
   document.getElementById("spell-submit").addEventListener("click", () => {
+    if (handleRetypeSubmit()) return;
     const w = spell.queue[spell.index];
     const answer = document.getElementById("spell-input").value.trim();
     const correct = answer.toLowerCase() === w.text.trim().toLowerCase();
@@ -2245,13 +2374,17 @@
       spell.missedThisRound = true;
       if (spell.round === 1) spell.retry.push(w);
       feedback.className = "feedback incorrect";
-      feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(w.text)}</span>`;
+      feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(w.text)}</span><span class="retype-prompt">Now type it once to lock it in 🔒</span>`;
     }
     updateStreakBadge(document.getElementById("spell-streak"), spell.streak);
     feedback.classList.remove("hidden");
-    document.getElementById("spell-input").disabled = true;
-    document.getElementById("spell-submit").classList.add("hidden");
-    document.getElementById("spell-continue").classList.remove("hidden");
+    if (correct) {
+      document.getElementById("spell-input").disabled = true;
+      document.getElementById("spell-submit").classList.add("hidden");
+      document.getElementById("spell-continue").classList.remove("hidden");
+    } else {
+      beginRetype("spell", w.text);
+    }
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
   });
 
@@ -2665,6 +2798,9 @@
 
     flushActivity();
     showScreen("test-results");
+    // Must run after showScreen(), not next to the celebrate() above: showScreen()
+    // calls clearBuddy(), so a class added before it would be wiped immediately.
+    if (pct >= 90) reactBuddy("cheer");
   }
   document.getElementById("test-results-done").addEventListener("click", () => { renderHome(); showScreen("home"); });
 
@@ -3281,6 +3417,7 @@
     if (kind === "theme") applyTheme(item.id);
     celebrate("small");
     playSound("purchase");
+    reactBuddy("cheer");
     toast(`Bought ${label}! 🎉`);
     renderShop();
   }

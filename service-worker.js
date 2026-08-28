@@ -1,4 +1,4 @@
-const CACHE_NAME = "word-study-v21";
+const CACHE_NAME = "word-study-v22";
 // Character avatars are precached so an equipped character still shows up
 // offline, active-in-shop or not (a kid's already-equipped avatar must keep
 // rendering even after a parent deactivates it in Manage Avatars). addAll()

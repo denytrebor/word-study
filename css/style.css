@@ -558,6 +558,28 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 .feedback.incorrect { background: var(--danger-bg); color: var(--danger); }
 .feedback .correct-answer { display: block; margin-top: 6px; font-size: 1.3rem; letter-spacing: 0.03em; }
 
+/* "LOCK IT IN" RETYPE
+   The prompt line lives inside the same .feedback box as the correct spelling so
+   the child reads "here is the word" and "now type it" as one instruction rather
+   than two competing ones. The shake is the entire response to a mistyped retype:
+   the target word is still on screen right above the input, so any explanatory
+   text would be telling them something they can already see. */
+.feedback .retype-prompt {
+  display: block;
+  margin-top: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+@keyframes input-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+.input-shake { animation: input-shake 0.3s ease-in-out; }
+
 .definition-box {
   margin-top: 16px;
   background: #f5f3ff;
@@ -915,4 +937,52 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 
 @media (min-width: 480px) {
   .menu-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* PRACTICE BUDDY
+   The equipped avatar reacts in place in the header rather than as a second
+   figure inside the practice card: the header is visible on every study screen
+   already, and #header-avatar is the one node that wraps both avatar kinds (an
+   emoji text node, and <img class="avatar-img"> for the illustrated characters),
+   so one class toggle animates both without either kind needing its own path.
+   display:inline-block is load-bearing, not cosmetic — the span is inline by
+   default and transforms are ignored on inline elements, so every animation
+   below would silently do nothing without it. The origin sits at the bottom
+   centre so a hop reads as pushing off the ground instead of sliding. */
+#header-avatar {
+  display: inline-block;
+  transform-origin: 50% 100%;
+}
+
+@keyframes buddy-nod {
+  0% { transform: translateY(0) scale(1); }
+  35% { transform: translateY(-6px) scale(1.08); }
+  70% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(0) scale(1); }
+}
+@keyframes buddy-cheer {
+  0% { transform: translateY(0) scale(1) rotate(0deg); }
+  15% { transform: translateY(-10px) scale(1.3) rotate(-7deg); }
+  35% { transform: translateY(0) scale(1.08) rotate(0deg); }
+  55% { transform: translateY(-7px) scale(1.2) rotate(6deg); }
+  75% { transform: translateY(0) scale(1) rotate(0deg); }
+  100% { transform: translateY(0) scale(1) rotate(0deg); }
+}
+@keyframes buddy-wobble {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-7deg); }
+  50% { transform: rotate(6deg); }
+  75% { transform: rotate(-4deg); }
+  100% { transform: rotate(0deg); }
+}
+.buddy-nod { animation: buddy-nod 0.45s ease-out; }
+.buddy-cheer { animation: buddy-cheer 0.9s cubic-bezier(0.3, 1.4, 0.5, 1); }
+.buddy-wobble { animation: buddy-wobble 0.7s ease-in-out; }
+
+/* The app has no accessibility settings screen and this is not the feature to
+   add one for, but a child (or parent) who has already told the OS they don't
+   want motion should not be argued with. The JS still adds and removes the
+   classes normally; only the movement is dropped. */
+@media (prefers-reduced-motion: reduce) {
+  .buddy-nod, .buddy-cheer, .buddy-wobble, .input-shake { animation: none; }
 }
