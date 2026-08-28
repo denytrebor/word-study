@@ -54,11 +54,24 @@ practice scores.
 
 ## Study modes
 
-Look & Say (TTS flashcards) · Spelling Practice · Vocab Practice · Test Mode
+Look & Say (TTS flashcards, definition-free, every word) · Spelling Practice ·
+Vocab Practice, split into two sub-modes reached via a picker screen behind
+the same Home tile — Flip & Rate (self-graded reveal) and Match the Meaning
+(word shown, pick its definition from up to 4 choices, actually graded) —
+**both draw only from words that have a definition**, so a week with no
+definitions gets a one-time explanation instead of a session full of
+placeholder text; Look & Say deliberately stays definition-free and keeps
+every word, which is the clean split between it and Vocab Practice · Test Mode
 (one pass, max 2 replays, no feedback until the end) · Speed Quiz
 (parent-led swipeable flashcards) · Word Scramble (tile-drag spelling) ·
 Smart Review (weakest words across every week practiced — see Usability
 features below; the only mode not scoped to a single week).
+
+Test Mode's "Vocab Test" and Speed Quiz's "Vocab" kind are **deliberately NOT**
+filtered to defined words the way Vocab Practice is — they only ever show the
+word and ask for an honest self-rating, never promise a definition, so they
+degrade fine on an undefined word. Left alone on purpose, to keep this change
+scoped to the mode that actually claimed to show meaning.
 
 ## Gamification (fully shipped per `docs/gamification-parent-mode-spec.md`)
 
@@ -278,6 +291,63 @@ real correct/attempted counts rather than presented alone. "Recent tests"
 stays as its own section for percentage-scored Test Mode/Speed Quiz results
 specifically — this doesn't replace it, it fills the gap next to it.
 
+## Dashboard week tracker, parent self-manage, vocab split (2026-08-27)
+
+**Labeled Sun→Sat week tracker.** The Parent Dashboard's unlabeled `.psc-dots`
+strip was replaced with a **labeled S/M/Tu/W/Th/F/Sa row** rendered directly
+under "This week's practice," using theme-stable `var(--success)` green rather
+than `var(--accent)` (which swaps per equipped theme — pink in bubblegum,
+yellow in gold, purple in galaxy — and "did they practice" must not read as a
+different signal depending on which theme a kid last equipped). This is the
+**only week view in the app that carries day labels for a human**, so it's
+also the only one honest about days that haven't happened yet: a future day in
+the current week is dimmed rather than shown as a missed one. Backing this is
+a new `weekDatesSunToSat()` helper, deliberately separate from the existing
+`weekDatesMonToSun()` — Home's kid-facing streak dots stay Monday-first
+because they're unlabeled (the difference is invisible there) and
+`mondayOfThisWeek()` (starter-list import) depends on `weekDatesMonToSun()`
+meaning exactly what its name says. The mode-breakdown rows were also
+re-laid-out so the `N×` count sits immediately left of its label instead of
+stretched flush-right across the card.
+
+**Parent can rename/delete their own parent profile.** A "Your parent
+profile" block at the bottom of the Parent Dashboard (below the student
+cards) lets a signed-in parent rename or delete *only the parent profile
+whose PIN they just entered* — `state.parentProfile.id`, not any other
+profile. Deliberately narrow: a parent profile is just a name + a PIN with no
+subcollections, so deleting it destroys no practice data, whereas a **student**
+owns `students/{id}`, `progress/*`, `activity/*`, stars, unlocks and a
+class-roster position that Firestore would orphan if the enrollment doc were
+deleted out from under them — student rename/delete is explicitly out of
+scope here and remains its own future project. Deleting the last parent
+profile in a household is allowed and safe (nothing in the app assumes one
+exists — `renderProfiles()` already hides `#parent-list` when empty, and
+"👨‍👧 Add a parent" is always on the profiles screen). The delete writes
+Firestore first and local storage second — the reverse order would let an
+in-flight `watchProfiles()` snapshot silently resurrect the just-deleted
+profile before the remote delete lands. `docs/firestore.rules` now allows
+`delete` on `profiles/{profileId}` specifically (previously `if false`, per
+its own "NOT YET APPLIED" header) — this is the **only** delete path in the
+whole rules file; `progress/`, `activity/`, `students/{id}`, `households/{code}`
+and `catalogs/{code}` all stay non-deletable.
+
+**Vocab Practice split into two definition-required sub-modes.** The
+`💡 Vocab Practice` Home tile now opens a picker (`#screen-vocab-setup`)
+offering **🃏 Flip & Rate** (the original self-grade reveal flow, now filtered
+to defined words) and **🧩 Match the Meaning** (new: shows the word, grades
+against 4 multiple-choice definitions pulled from the rest of the week's
+list). Both draw exclusively from `wordsWithDefinition(progress)` — the old
+`"(No definition added for this word)"` placeholder is gone, because a
+meaning-focused mode that shows no meaning was indistinguishable from Look &
+Say, which was the actual ambiguity reported. A week with zero defined words
+gets a one-time explanation on the picker instead of a broken-feeling session;
+a week with 1-2 defined words offers Flip & Rate but disables Match the
+Meaning (needs at least 3 for a real multiple choice). Match the Meaning
+records into the same `"vocab"` stat bucket as Flip & Rate, so medals/accuracy
+stay one number per word regardless of which vocab sub-mode produced the
+answer. **Test Mode's "Vocab Test" and Speed Quiz's "Vocab" kind are
+deliberately left unfiltered** — see Study modes above.
+
 ## Word list duplicate check (fixed 2026-08-26)
 
 User found 3 of 12 words repeated within Grade 7 "Precision" Week 1 of the
@@ -472,7 +542,10 @@ test against a throwaway household/catalog code first (not the real
 rules allow `create`/`update` on household docs but **not `delete`** — a
 throwaway household can't actually be cleaned up after testing; leaving an
 orphaned empty household code around is harmless (no PII, just consumes one
-random 6-char code) and is the accepted cost of that testing pattern.
+random 6-char code) and is the accepted cost of that testing pattern. (This is
+about the `households/{code}` doc specifically, not every doc in the tree — a
+parent CAN now delete their own `profiles/{id}` doc, see "Parent self
+rename/delete" below. Students, progress, and activity stay non-deletable.)
 
 ## Current family data (real, live — do not touch as test cleanup)
 

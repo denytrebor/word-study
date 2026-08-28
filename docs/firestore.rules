@@ -67,7 +67,16 @@ service cloud.firestore {
         // Listing profiles requires already knowing the household code.
         allow get, list: if signedIn();
         allow create, update: if signedIn();
-        allow delete: if false;
+        // Delete is allowed here and NOWHERE else in these rules, for exactly
+        // one client feature: a parent removing their own parent profile
+        // (Parent Dashboard → "Your parent profile" → Delete). A parent doc is
+        // a name + a PIN and owns no subcollections, so deleting it destroys no
+        // practice data. This does open the same blast radius the rest of this
+        // model already accepts — a code-holder can delete any profile doc in
+        // their household. The progress/ and activity/ subcollections below
+        // deliberately keep `allow delete: if false`, so even a hostile delete
+        // of a student's enrollment doc cannot take their history with it.
+        allow delete: if signedIn();
 
         match /progress/{weekId} {
           allow get, list, create, update: if signedIn();

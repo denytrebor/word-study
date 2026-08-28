@@ -292,10 +292,17 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
 .psc-identity .psc-meta { color: var(--muted); font-size: 0.85rem; }
 .psc-stat-row { display: flex; gap: 14px; flex-wrap: wrap; margin-left: auto; text-align: right; font-size: 0.9rem; font-weight: 700; }
 .psc-section-title { font-weight: 700; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 14px 0 8px; }
-.psc-dots { display: flex; gap: 6px; }
-.psc-dot { width: 13px; height: 13px; border-radius: 50%; background: var(--border); }
-.psc-dot.filled { background: var(--accent); }
-.psc-dot.today { box-shadow: 0 0 0 2px var(--primary); }
+.psc-week-track { display: flex; gap: 6px; margin: 0 0 12px; }
+.psc-day { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.psc-day-label { font-size: 0.68rem; font-weight: 700; color: var(--muted); letter-spacing: 0.02em; }
+.psc-day-dot { width: 13px; height: 13px; border-radius: 50%; background: var(--border); }
+/* Theme-stable green — --accent changes per equipped theme, this signal must not. */
+.psc-day.done .psc-day-dot { background: var(--success); }
+.psc-day.today .psc-day-dot { box-shadow: 0 0 0 2px var(--primary); }
+.psc-day.future { opacity: 0.4; }
+
+.psc-mode-row { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; font-size: 0.9rem; }
+.psc-mode-count { min-width: 2.2em; font-weight: 800; color: var(--primary); }
 .psc-usage-line { color: var(--muted); font-size: 0.9rem; margin: 6px 0; }
 .psc-needs-work { display: flex; flex-direction: column; gap: 6px; }
 .psc-needs-work-row {
@@ -316,6 +323,12 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
 .psc-pct-red { color: var(--danger); font-weight: 800; }
 .psc-empty { color: var(--muted); font-style: italic; font-size: 0.9rem; }
 .psc-loading { color: var(--muted); font-style: italic; }
+.parent-self-manage { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); }
+.parent-self-manage .new-profile-form { margin-bottom: 6px; }
+.parent-self-delete { max-width: 420px; margin: 6px auto 0; display: block; font-size: 0.9rem; color: var(--danger); }
+/* The shared .parent-pin-entry box is 260px wide (sized for a PIN pad); this
+   confirm carries a sentence of explanation and needs the room. */
+.parent-self-confirm { max-width: 420px; }
 .week-picker-group-title {
   font-weight: 700;
   color: var(--muted);
@@ -553,6 +566,29 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   border-radius: 14px;
   font-size: 1.1rem;
 }
+
+/* MATCH THE MEANING — options reuse the definition-box palette so a chosen
+   answer and a revealed definition read as the same kind of thing. */
+.vmatch-choices { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+.vmatch-choice {
+  background: #f5f3ff;
+  color: var(--primary-dark);
+  border: 2px solid transparent;
+  border-radius: 14px;
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.vmatch-choice:active { transform: scale(0.98); }
+.vmatch-choice:disabled { cursor: default; }
+.vmatch-choice.correct { background: var(--success-bg); color: var(--success); border-color: var(--success); }
+.vmatch-choice.wrong { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+.vocab-setup-empty { max-width: 480px; margin: 16px auto; text-align: center; line-height: 1.5; }
+.menu-card-disabled { opacity: 0.45; cursor: default; }
+.menu-card-disabled:active { transform: none; }
 
 /* WORD SCRAMBLE */
 .scramble-row {

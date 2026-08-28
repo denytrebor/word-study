@@ -114,6 +114,26 @@
     return dates;
   }
 
+  // Sunday-Saturday dates for the calendar week containing dateStr. The parent
+  // dashboard uses this one rather than weekDatesMonToSun() because its week
+  // strip is the only week in the app that is actually LABELED for a human
+  // ("S M Tu W Th F Sa"), and a Sunday-first row is what a parent reads a
+  // calendar as. Home's streak dots stay Monday-first: they carry no labels, so
+  // the difference is invisible there, and mondayOfThisWeek() (starter-list
+  // import) depends on that helper meaning exactly what its name says.
+  function weekDatesSunToSat(dateStr) {
+    const d = new Date(dateStr + "T00:00:00");
+    const sunday = new Date(d);
+    sunday.setDate(sunday.getDate() - d.getDay()); // getDay(): 0=Sun..6=Sat
+    const dates = [];
+    for (let i = 0; i < 7; i++) {
+      const cur = new Date(sunday);
+      cur.setDate(cur.getDate() + i);
+      dates.push(dateToLocalStr(cur));
+    }
+    return dates;
+  }
+
   /* ---------------------------------------------------------------------
    * App state
    * ------------------------------------------------------------------- */
@@ -492,6 +512,17 @@
         if (ba === null) return -1;
         return aa - ba;
       });
+  }
+
+  // Vocab Practice is a MEANING exercise, so it draws only from words the
+  // parent actually annotated with a definition. Before this, it ran over
+  // every word and showed "(No definition added for this word)" on the rest —
+  // which made it a slower, more confusing copy of Look & Say. Look & Say
+  // keeps every word and shows no definition at all; that's now the clean
+  // split between the two modes.
+  function wordsWithDefinition(progress) {
+    if (!progress || !Array.isArray(progress.words)) return [];
+    return progress.words.filter((w) => w && typeof w.definition === "string" && w.definition.trim());
   }
 
   function relativeDateLabel(dateStr) {
@@ -1050,6 +1081,7 @@
 
   function openParentDashboard() {
     document.getElementById("parent-dash-title").textContent = `👋 ${state.parentProfile.name}`;
+    renderParentSelfManage();
     showScreen("parent-dashboard");
     loadParentDashboard();
   }
@@ -1061,6 +1093,74 @@
     showScreen("profiles");
     watchProfilesList();
   });
+
+  /* ---------------------------------------------------------------------
+   * PARENT SELF-MANAGE (rename / delete your own parent profile)
+   * The only profile editing anywhere in the app, and deliberately narrow:
+   * the parent viewing this screen already proved they hold this profile's
+   * PIN, and a parent profile is a name + a PIN and nothing else, so
+   * renaming it is free and deleting it destroys no practice data. Student
+   * profiles are NOT editable here — a student owns progress docs, activity
+   * docs, stars and unlocks across two collections, and Firestore doesn't
+   * delete subcollections with their parent document.
+   * ------------------------------------------------------------------- */
+  const PARENT_NAME_MAX = 60;
+
+  function renderParentSelfManage() {
+    if (!state.parentProfile) return;
+    document.getElementById("parent-self-name").value = state.parentProfile.name || "";
+    document.getElementById("parent-self-delete-confirm").classList.add("hidden");
+  }
+
+  document.getElementById("btn-parent-self-rename").addEventListener("click", () => {
+    if (!state.parentProfile) return;
+    const name = document.getElementById("parent-self-name").value.trim().slice(0, PARENT_NAME_MAX);
+    if (!name) { toast("Type a name first"); return; }
+    if (name === state.parentProfile.name) return;
+    // state.parentProfile is a detached copy — getProfiles() JSON.parses a
+    // fresh array on every call — so mutating it persists nothing on its own.
+    state.parentProfile.name = name;
+    updateLocalProfileFields(state.parentProfile.id, { name });
+    if (firestoreReady()) Sync.pushProfile(state.parentProfile);
+    document.getElementById("parent-dash-title").textContent = `👋 ${name}`;
+    toast("Name updated");
+  });
+
+  document.getElementById("btn-parent-self-delete").addEventListener("click", () => {
+    if (!state.parentProfile) return;
+    document.getElementById("parent-self-delete-name").textContent = state.parentProfile.name || "this profile";
+    document.getElementById("parent-self-delete-confirm").classList.remove("hidden");
+  });
+  document.getElementById("btn-parent-self-delete-cancel").addEventListener("click", () => {
+    document.getElementById("parent-self-delete-confirm").classList.add("hidden");
+  });
+
+  // Firestore first, local second — the reverse order has a real bug in it:
+  // watchProfiles() may already be listening (enterApp/switch-profile start
+  // it and it is never stopped), and it overwrites the whole local profile
+  // list from every snapshot. A local-first delete would be silently undone
+  // by any snapshot arriving before the remote delete landed. Deleting
+  // locally regardless of the remote result keeps the offline/local-only
+  // household — a fully supported mode here — working exactly as expected.
+  async function deleteOwnParentProfile() {
+    const p = state.parentProfile;
+    if (!p) return;
+    const btn = document.getElementById("btn-parent-self-delete-yes");
+    btn.disabled = true;
+    let synced = true;
+    if (firestoreReady()) {
+      try { synced = await Sync.deleteParentProfile(p.id); } catch (e) { synced = false; }
+    }
+    saveProfiles(getProfiles().filter((x) => x.id !== p.id));
+    btn.disabled = false;
+    document.getElementById("parent-self-delete-confirm").classList.add("hidden");
+    state.parentProfile = null;
+    renderProfiles();
+    showScreen("profiles");
+    watchProfilesList();
+    toast(synced ? "Parent profile deleted" : "Deleted on this device — sync didn't accept it, so it may come back.");
+  }
+  document.getElementById("btn-parent-self-delete-yes").addEventListener("click", deleteOwnParentProfile);
 
   function pctClass(pct) {
     if (pct >= 90) return "psc-pct-green";
@@ -1091,7 +1191,7 @@
     }
 
     const today = todayLocalStr();
-    const dates = weekDatesMonToSun(today);
+    const dates = weekDatesSunToSat(today);   // was weekDatesMonToSun(today)
     const activityByDate = {};
     dates.forEach((d) => {
       const local = load(activityKey(student.id, d), null);
@@ -1118,12 +1218,16 @@
   const MODE_LABELS = {
     flashcard: "🔊 Look & Say",
     spelling: "✏️ Spelling Practice",
-    vocab: "💡 Vocab Practice",
+    vocab: "💡 Vocab · Flip & Rate",
+    vocabmatch: "🧩 Vocab · Match the Meaning",
     test: "🎯 Test Mode",
     speed: "⚡ Speed Quiz",
     scramble: "🔤 Word Scramble",
     review: "🧠 Smart Review",
   };
+
+  // Index-aligned with weekDatesSunToSat()'s output.
+  const DAY_LABELS = ["S", "M", "Tu", "W", "Th", "F", "Sa"];
 
   function renderStudentCard(data) {
     const { student, week, progress, dates, activityByDate } = data;
@@ -1143,12 +1247,20 @@
       .filter(([, n]) => n > 0)
       .sort((a, b) => b[1] - a[1]);
 
-    const dotsHtml = dates.map((d) => {
-      const filled = activityByDate[d] && activityByDate[d].answers > 0;
-      const cls = ["psc-dot"];
-      if (filled) cls.push("filled");
+    // The only week view in the app that carries day labels, so it is the one
+    // that has to be honest about days that haven't happened yet: a Thursday
+    // in the future is dimmed, not shown as a missed day. Green is var(--success)
+    // rather than var(--accent) on purpose — --accent is theme-swapped (pink in
+    // bubblegum, yellow in gold, purple in galaxy), and "did they practice"
+    // must not read as a different signal depending on which theme the kid last
+    // equipped on this device.
+    const weekTrackHtml = dates.map((d, i) => {
+      const done = activityByDate[d] && activityByDate[d].answers > 0;
+      const cls = ["psc-day"];
+      if (done) cls.push("done");
       if (d === today) cls.push("today");
-      return `<span class="${cls.join(" ")}"></span>`;
+      else if (d > today) cls.push("future");
+      return `<div class="${cls.join(" ")}"><span class="psc-day-label">${DAY_LABELS[i]}</span><span class="psc-day-dot"></span></div>`;
     }).join("");
 
     const medalCounts = { gold: 0, silver: 0, bronze: 0, none: 0 };
@@ -1173,7 +1285,7 @@
     // counts stay in the accuracy line above, where they're paired with the
     // week's actual correct/attempted totals rather than presented alone.
     const modeHtml = modeBreakdown.length
-      ? modeBreakdown.map(([mode, n]) => `<div class="psc-tests-row"><span>${MODE_LABELS[mode] || escapeAttr(mode)}</span><span>${n}×</span></div>`).join("")
+      ? modeBreakdown.map(([mode, n]) => `<div class="psc-mode-row"><span class="psc-mode-count">${n}×</span><span>${MODE_LABELS[mode] || escapeAttr(mode)}</span></div>`).join("")
       : `<p class="psc-empty">No practice sessions yet this week.</p>`;
 
     return `
@@ -1191,10 +1303,10 @@
         </div>
 
         <p class="psc-usage-line">Last practiced: <strong>${relativeDateLabel(student.lastActiveDate)}</strong></p>
-        <div class="psc-dots">${dotsHtml}</div>
         <p class="psc-usage-line">${weekAnswers} answers this week${weekAccuracy !== null ? " · " + weekAccuracy + "% accuracy" : ""}</p>
 
         <p class="psc-section-title">This week's practice</p>
+        <div class="psc-week-track">${weekTrackHtml}</div>
         <div>${modeHtml}</div>
 
         <p class="psc-section-title">${week ? escapeAttr(week.label) : "No word list"}</p>
@@ -2038,7 +2150,7 @@
       }
       if (target === "flashcard") openFlashcard();
       else if (target === "spelling") openSpelling(false);
-      else if (target === "vocab") openVocab(false);
+      else if (target === "vocab") openVocabSetup();
       else if (target === "test-setup") showScreen("test-setup");
       else if (target === "speed-setup") showScreen("speed-setup");
       else if (target === "scramble") openScramble();
@@ -2179,12 +2291,59 @@
   });
 
   /* ---------------------------------------------------------------------
+   * VOCAB PRACTICE PICKER
+   * The Home grid is a deliberate 9 tiles (a clean 3x3 at >=480px), so the
+   * second vocab mode goes behind the existing tile rather than beside it —
+   * the same tile -> pick-a-kind -> run shape Test Mode and Speed Quiz
+   * already use, so it's a pattern the family has learned once already.
+   * ------------------------------------------------------------------- */
+  const VOCAB_MATCH_MIN_WORDS = 3;  // fewer than 3 definitions can't make a real multiple choice
+  const VOCAB_MATCH_CHOICES = 4;
+
+  function openVocabSetup() {
+    const defined = wordsWithDefinition(state.progress);
+    const empty = document.getElementById("vocab-setup-empty");
+    const grid = document.getElementById("vocab-setup-grid");
+    const note = document.getElementById("vocab-setup-match-note");
+    if (!defined.length) {
+      // The one-time explanation for a household whose current week has no
+      // definitions — they used to get a Vocab session full of placeholder
+      // text, which looked like a broken app rather than missing content.
+      empty.textContent = "None of this week's words have a definition yet, so there's nothing to practice the meaning of. A grown-up can add them in Manage Word Catalog — put a comma and the meaning after the word, like: habit, something you do often";
+      empty.classList.remove("hidden");
+      grid.classList.add("hidden");
+      note.classList.add("hidden");
+    } else {
+      empty.classList.add("hidden");
+      grid.classList.remove("hidden");
+      const matchCard = grid.querySelector('.menu-card[data-vocab-kind="match"]');
+      const enoughForMatch = defined.length >= VOCAB_MATCH_MIN_WORDS;
+      matchCard.disabled = !enoughForMatch;
+      matchCard.classList.toggle("menu-card-disabled", !enoughForMatch);
+      note.classList.toggle("hidden", enoughForMatch);
+    }
+    showScreen("vocab-setup");
+  }
+
+  document.querySelectorAll(".menu-card[data-vocab-kind]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.getAttribute("data-vocab-kind") === "match") openVocabMatch();
+      else openVocab();
+    });
+  });
+  document.getElementById("vocab-setup-exit").addEventListener("click", () => showScreen("home"));
+
+  /* ---------------------------------------------------------------------
    * VOCAB PRACTICE SESSION
    * ------------------------------------------------------------------- */
   let vocab = { queue: [], retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
 
   function openVocab() {
-    vocab = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
+    const words = wordsWithDefinition(state.progress);
+    // The picker already gates this, but a session with an empty queue would
+    // crash renderVocab() on queue[0] — cheap guard, same shape as openReview().
+    if (!words.length) { toast("No words with definitions in this week's list."); return; }
+    vocab = { queue: shuffle(words), retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
     document.getElementById("vocab-streak").classList.add("hidden");
     recordModeStart("vocab");
     renderVocab();
@@ -2196,7 +2355,7 @@
     document.getElementById("vocab-progress").textContent = `Word ${vocab.index + 1} of ${vocab.queue.length}${vocab.round === 2 ? " (retry)" : ""}`;
     document.getElementById("vocab-word").textContent = w.text;
     document.getElementById("vocab-definition").classList.add("hidden");
-    document.getElementById("vocab-definition").textContent = w.definition || "(No definition added for this word)";
+    document.getElementById("vocab-definition").textContent = w.definition;
     document.getElementById("vocab-reveal").classList.remove("hidden");
     document.getElementById("vocab-selfgrade").classList.add("hidden");
     speak(w.text);
@@ -2240,6 +2399,126 @@
   document.getElementById("vocab-knew-it").addEventListener("click", () => gradeVocab(true));
   document.getElementById("vocab-missed").addEventListener("click", () => gradeVocab(false));
   document.getElementById("vocab-exit").addEventListener("click", () => {
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
+    flushActivity();
+    renderHome();
+    showScreen("home");
+  });
+
+  /* ---------------------------------------------------------------------
+   * MATCH THE MEANING (word -> pick its definition)
+   * Same session skeleton as Spelling/Scramble (queue + round-2 retry +
+   * awardRoundCompletionBonus) and the same "vocab" stat bucket as Flip &
+   * Rate, so medals and accuracy stay one coherent number per word rather
+   * than splitting by which vocab mode produced the answer.
+   * ------------------------------------------------------------------- */
+  let vmatch = { queue: [], pool: [], retry: [], index: 0, round: 1, streak: 0, missedThisRound: false, choices: [], locked: false };
+
+  // Distractors come from the whole week's defined words, never from the
+  // current (possibly 2-word retry) queue, so round 2 still offers a real
+  // choice. Definitions are de-duplicated case-insensitively: two words in one
+  // list can legitimately share wording, and offering that text as a "wrong"
+  // answer would mark a correct understanding wrong.
+  function buildVocabMatchChoices(word, pool) {
+    const target = word.definition.trim();
+    const seen = new Set([target.toLowerCase()]);
+    const distractors = [];
+    shuffle(pool).forEach((w) => {
+      if (distractors.length >= VOCAB_MATCH_CHOICES - 1) return;
+      if (w.id === word.id) return;
+      const d = (w.definition || "").trim();
+      if (!d || seen.has(d.toLowerCase())) return;
+      seen.add(d.toLowerCase());
+      distractors.push(d);
+    });
+    return shuffle([target].concat(distractors));
+  }
+
+  function openVocabMatch() {
+    const words = wordsWithDefinition(state.progress);
+    if (words.length < VOCAB_MATCH_MIN_WORDS) { toast("Needs at least 3 words with definitions."); return; }
+    vmatch = { queue: shuffle(words), pool: words, retry: [], index: 0, round: 1, streak: 0, missedThisRound: false, choices: [], locked: false };
+    document.getElementById("vmatch-streak").classList.add("hidden");
+    recordModeStart("vocabmatch");
+    renderVocabMatch();
+    showScreen("vocab-match");
+  }
+
+  function renderVocabMatch() {
+    const w = vmatch.queue[vmatch.index];
+    vmatch.locked = false;
+    vmatch.choices = buildVocabMatchChoices(w, vmatch.pool);
+    document.getElementById("vmatch-progress").textContent = `Word ${vmatch.index + 1} of ${vmatch.queue.length}${vmatch.round === 2 ? " (retry)" : ""}`;
+    document.getElementById("vmatch-word").textContent = w.text;
+    document.getElementById("vmatch-feedback").classList.add("hidden");
+    document.getElementById("vmatch-continue").classList.add("hidden");
+    const wrap = document.getElementById("vmatch-choices");
+    wrap.innerHTML = "";
+    vmatch.choices.forEach((text) => {
+      const btn = document.createElement("button");
+      btn.className = "vmatch-choice";
+      btn.textContent = text;                       // textContent, so no escaping question at all
+      btn.addEventListener("click", () => gradeVocabMatch(text));
+      wrap.appendChild(btn);
+    });
+    speak(w.text);
+  }
+
+  document.getElementById("vmatch-hear").addEventListener("click", () => speak(vmatch.queue[vmatch.index].text));
+
+  function gradeVocabMatch(chosen) {
+    if (vmatch.locked) return;                      // a double-tap must not double-record an answer
+    vmatch.locked = true;
+    const w = vmatch.queue[vmatch.index];
+    const target = w.definition.trim();
+    const correct = chosen === target;
+    recordAnswer(w, correct, "vocab");
+    Array.from(document.getElementById("vmatch-choices").children).forEach((btn) => {
+      btn.disabled = true;
+      if (btn.textContent === target) btn.classList.add("correct");
+      else if (btn.textContent === chosen) btn.classList.add("wrong");
+    });
+    const feedback = document.getElementById("vmatch-feedback");
+    if (correct) {
+      vmatch.streak++;
+      feedback.className = "feedback correct";
+      feedback.textContent = "✅ Correct! Nice work.";
+    } else {
+      vmatch.streak = 0;
+      vmatch.missedThisRound = true;
+      if (vmatch.round === 1) vmatch.retry.push(w);
+      feedback.className = "feedback incorrect";
+      feedback.textContent = "❌ Not quite — the green one is what it means.";
+    }
+    updateStreakBadge(document.getElementById("vmatch-streak"), vmatch.streak);
+    feedback.classList.remove("hidden");
+    document.getElementById("vmatch-continue").classList.remove("hidden");
+    saveProgress(state.profile.id, state.progress.weekId, state.progress);
+  }
+
+  document.getElementById("vmatch-continue").addEventListener("click", () => {
+    vmatch.index++;
+    if (vmatch.index >= vmatch.queue.length) {
+      if (vmatch.round === 1 && vmatch.retry.length > 0) {
+        vmatch.queue = shuffle(vmatch.retry);
+        vmatch.retry = [];
+        vmatch.index = 0;
+        vmatch.round = 2;
+        vmatch.missedThisRound = false;
+        toast("Let's review those again!");
+        renderVocabMatch();
+      } else {
+        if (!awardRoundCompletionBonus(vmatch)) toast("Match the Meaning complete! ⭐");
+        flushActivity();
+        renderHome();
+        showScreen("home");
+      }
+    } else {
+      renderVocabMatch();
+    }
+  });
+
+  document.getElementById("vmatch-exit").addEventListener("click", () => {
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
     flushActivity();
     renderHome();

@@ -200,6 +200,23 @@ const Sync = (function () {
     }, { merge: true }).catch(warnWriteFailed("student " + profile.id));
   }
 
+  // The app's first and only delete. It may ONLY ever be pointed at a
+  // role:"parent" profile: a parent's entire Firestore footprint is this one
+  // enrollment doc (pushProfile above writes nothing else for a parent — no
+  // students/{id} doc, and parents never accumulate progress/ or activity/
+  // subcollections). A STUDENT id must never be passed here: Firestore does
+  // not delete a document's subcollections with it, so their progress and
+  // activity docs would survive as unreachable orphans under a deleted parent
+  // path. Resolves true when the doc is gone, false when sync isn't available
+  // at all (offline / no household) so the caller can tell the user their
+  // local delete may not have travelled; a rejected write propagates.
+  async function deleteParentProfile(profileId) {
+    const ref = profileRef(profileId);
+    if (!ref || !(await ready)) return false;
+    await ref.delete();
+    return true;
+  }
+
   async function fetchHouseholdCatalogCode() {
     const hCode = getHouseholdCode();
     if (!hCode || !db || !(await ready)) return null;
@@ -511,6 +528,7 @@ const Sync = (function () {
     createHousehold,
     joinHousehold,
     pushProfile,
+    deleteParentProfile,
     fetchHouseholdCatalogCode,
     watchProfiles,
     watchProfile,

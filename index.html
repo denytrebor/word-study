@@ -167,6 +167,22 @@
         </div>
       </div>
       <div id="parent-dash-cards"></div>
+
+      <div class="parent-self-manage">
+        <p class="psc-section-title">Your parent profile</p>
+        <div class="new-profile-form">
+          <input type="text" id="parent-self-name" placeholder="Your name" spellcheck="false" autocomplete="off" autocorrect="off">
+          <button id="btn-parent-self-rename" class="btn btn-secondary">Save Name</button>
+        </div>
+        <button id="btn-parent-self-delete" class="btn btn-ghost parent-self-delete">Delete my parent profile</button>
+        <div id="parent-self-delete-confirm" class="parent-pin-entry parent-self-confirm hidden">
+          <p class="hint">Delete <strong id="parent-self-delete-name"></strong>? This removes this parent profile and its PIN everywhere in this household. Student profiles, stars and practice history are not touched.</p>
+          <div class="parent-pin-actions">
+            <button id="btn-parent-self-delete-yes" class="btn btn-danger">Yes, delete</button>
+            <button id="btn-parent-self-delete-cancel" class="btn btn-ghost">Cancel</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- SCREEN: School Overview (read-only, aggregate-only, cross-class — see docs/school-scale-plan.md Phase 3) -->
@@ -353,6 +369,25 @@
       <button id="review-exit" class="btn btn-ghost">Exit</button>
     </section>
 
+    <!-- SCREEN: Vocab Practice picker (which kind of meaning practice) -->
+    <section id="screen-vocab-setup" class="screen">
+      <h2>💡 Vocab Practice</h2>
+      <p class="hint">Practice what the words mean. Only words that have a definition in this week's list appear here.</p>
+      <p class="hint vocab-setup-empty hidden" id="vocab-setup-empty"></p>
+      <div class="menu-grid" id="vocab-setup-grid">
+        <button class="menu-card" data-vocab-kind="flip">
+          <span class="menu-icon">🃏</span>
+          <span>Flip &amp; Rate</span>
+        </button>
+        <button class="menu-card" data-vocab-kind="match">
+          <span class="menu-icon">🧩</span>
+          <span>Match the Meaning</span>
+        </button>
+      </div>
+      <p class="hint hidden" id="vocab-setup-match-note">Match the Meaning needs at least 3 words with definitions in this week's list.</p>
+      <button id="vocab-setup-exit" class="btn btn-ghost">Cancel</button>
+    </section>
+
     <!-- SCREEN: Vocab Practice -->
     <section id="screen-vocab" class="screen">
       <div class="session-topbar">
@@ -374,6 +409,26 @@
         </div>
       </div>
       <button id="vocab-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
+    <!-- SCREEN: Match the Meaning (word → pick its definition) -->
+    <section id="screen-vocab-match" class="screen">
+      <div class="session-topbar">
+        <span id="vmatch-progress">Word 1 of 1</span>
+        <span id="vmatch-streak" class="streak-badge hidden">🔥 0</span>
+      </div>
+
+      <div class="practice-card">
+        <p class="practice-instruction">Which meaning matches this word?</p>
+        <div class="flashcard-word" id="vmatch-word">word</div>
+        <button id="vmatch-hear" class="btn btn-round">🔊 Hear It</button>
+
+        <div id="vmatch-choices" class="vmatch-choices"></div>
+
+        <div id="vmatch-feedback" class="feedback hidden"></div>
+        <button id="vmatch-continue" class="btn btn-secondary hidden">Continue →</button>
+      </div>
+      <button id="vmatch-exit" class="btn btn-ghost">Exit</button>
     </section>
 
     <!-- SCREEN: Word Scramble -->
