@@ -9,7 +9,7 @@
   --danger: #dc2626;
   --danger-bg: #fee2e2;
   --text: #1f2333;
-  --muted: #6b7280;
+  --muted: #4b5563; /* one shade darker than the original #6b7280 — that was ~4.3:1 against --bg, just under WCAG AA's 4.5:1 for normal text */
   --border: #e2e5f5;
   --radius: 20px;
   --shadow: 0 6px 18px rgba(67, 56, 202, 0.12);
@@ -29,6 +29,15 @@
   --primary: #7c3aed; --primary-dark: #5b21b6; --accent: #c084fc; --bg: #120f1f;
   --text: #f3f0ff; --card: #1f1b33; --border: #382f57; --muted: #a99fcf;
 }
+/* --primary-dark reads fine as text on the fixed-light .definition-box, but
+   Galaxy's own surfaces are near-black — a dark purple would fail contrast
+   there. --accent is already a light purple chosen to show up on Galaxy's
+   dark background (its dots/borders already lean on it), so these two
+   accent-flavored text bits swap back to it just for this theme. */
+:root[data-theme="galaxy"] .streak-banner-text,
+:root[data-theme="galaxy"] .home-recommend-label {
+  color: var(--accent);
+}
 
 * { box-sizing: border-box; }
 
@@ -40,6 +49,12 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   -webkit-tap-highlight-color: transparent;
   min-height: 100%;
+  /* Kills the browser's double-tap-to-zoom gesture (and the ~300ms tap
+     delay that comes with it) so fast tapping around the app never
+     accidentally zooms the page — WITHOUT disabling pinch-zoom, which the
+     viewport meta tag deliberately still allows (removing pinch-zoom is a
+     real WCAG 1.4.4 failure, not just an app-feel nitpick). */
+  touch-action: manipulation;
 }
 
 #app {
@@ -427,7 +442,13 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   margin-bottom: 20px;
 }
 .streak-banner.hidden { display: none; }
-.streak-banner-text { margin: 0 0 10px; font-weight: 800; font-size: 1.1rem; color: var(--accent); }
+/* --accent as a background/border/dot color is fine everywhere it's already
+   used, but as small TEXT it's too light against --bg (~2:1) — --primary-dark
+   is the token this app already trusts for readable text (.definition-box,
+   .vmatch-choice), so these two accent-flavored text bits borrow it instead
+   of inventing a new one. Galaxy's dark background needs the opposite
+   direction, so it gets its own override right after the theme block below. */
+.streak-banner-text { margin: 0 0 10px; font-weight: 800; font-size: 1.1rem; color: var(--primary-dark); }
 .streak-banner.no-streak .streak-banner-text { font-weight: 700; font-size: 1rem; color: var(--muted); }
 .streak-banner-dots { display: flex; justify-content: center; gap: 8px; }
 .streak-dot { width: 15px; height: 15px; border-radius: 50%; background: var(--border); }
@@ -459,7 +480,7 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--accent);
+  color: var(--primary-dark);
   margin-bottom: 4px;
 }
 

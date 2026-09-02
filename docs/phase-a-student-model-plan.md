@@ -2,7 +2,7 @@
 
 _Written by Opus 5, acting as architect. Implements Phase A of
 `docs/long-term-architecture.md`. This touches the shape of REAL, LIVE data
-(household `9S6NU3`: Micah, Robert, Roman, two Candice parent profiles) —
+(household `REDACTED-HOUSEHOLD-CODE`: Micah, Robert, Roman, two Candice parent profiles) —
 read the safety rules below before writing a single line, they are not
 optional. Implementing agent: mark checkboxes `[x]` only after verifying in a
 real browser, and fill in Implementation Notes at the bottom as you go, same
@@ -13,7 +13,7 @@ _2026-08-27_
 > **STATUS: LIVE AND VERIFIED (2026-08-27).** The user applied
 > `docs/firestore.rules` in the Firebase console. The architect re-tested
 > the full feature against real production Firestore (throwaway households
-> only, never `9S6NU3`/`zoelive`) after that: `students/{id}` is reachable,
+> only, never `REDACTED-HOUSEHOLD-CODE`/`REDACTED-CATALOG-CODE`) after that: `students/{id}` is reachable,
 > `list` is correctly denied on it, a legacy-shape profile migrates itself
 > correctly on load (777 stars, streak, unlocks, equipped avatar all
 > present, nothing blanked), a real purchase correctly persists to the new
@@ -40,7 +40,7 @@ households. This is deliberate: a destructive migration step that goes wrong
 against real data (Micah/Robert/Roman's actual stars) is a real harm; a
 little stale duplicate data sitting unread in Firestore forever is not.
 
-**Never connect this app to household `9S6NU3` or catalog `zoelive` while
+**Never connect this app to household `REDACTED-HOUSEHOLD-CODE` or catalog `REDACTED-CATALOG-CODE` while
 building or testing this.** All testing uses fresh throwaway households,
 per the existing established practice in this repo. The migration logic
 only needs to be *correct*, not run by hand against real data — see "How
@@ -253,7 +253,7 @@ below is guarded the same way existing sync functions already are
 
 ## How existing real data actually migrates
 
-No manual step, no console script, no touching household `9S6NU3` directly.
+No manual step, no console script, no touching household `REDACTED-HOUSEHOLD-CODE` directly.
 The very next time any real device opens the real app after this ships,
 `watchProfiles`/`watchProfile`/`fetchHouseholdProfiles` runs
 `migrateStudentIfNeeded()` against Micah, Robert, and Roman's existing
@@ -573,5 +573,5 @@ either a brand-new `students/{id}` `.set()` (create-only, and in every
 observed case it failed harmlessly under the current rules rather than
 partially applying) or a `.set(..., {merge:true})` on an enrollment doc —
 confirmed directly via Firestore reads after each write that no existing
-field was ever removed. Household `9S6NU3` and catalog `zoelive` were never
+field was ever removed. Household `REDACTED-HOUSEHOLD-CODE` and catalog `REDACTED-CATALOG-CODE` were never
 referenced, connected to, or read at any point in this session.

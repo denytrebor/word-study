@@ -270,13 +270,26 @@
 
   function showScreen(id) {
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
-    document.getElementById("screen-" + id).classList.add("active");
+    const section = document.getElementById("screen-" + id);
+    section.classList.add("active");
     const header = document.getElementById("app-header");
     header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal" || id === "class-roster" || id === "class-info" || id === "school-overview");
     endRetype();
     clearBuddy();
     window.scrollTo(0, 0);
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+    // A screen-reader/keyboard user gets no signal that navigation happened —
+    // the DOM swap above is silent to assistive tech otherwise. Every screen
+    // opens with an h1/h2 (see index.html), so that's a reliable, sensible
+    // place to land focus; tabindex="-1" makes it focusable via script
+    // without adding it to the normal Tab order. Harmless for a mouse/touch
+    // user: browsers only show the visible focus ring for keyboard-driven
+    // focus, not a scripted one, via :focus-visible's own heuristics.
+    const heading = section.querySelector("h1, h2");
+    if (heading) {
+      if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+      heading.focus({ preventScroll: true });
+    }
   }
 
   // equippedAvatar replaces the legacy `avatar` field at display time —
@@ -2087,7 +2100,12 @@
   });
 
   function refreshMuteButton() {
-    document.getElementById("btn-mute-toggle").textContent = isMuted() ? "🔇" : "🔊";
+    const btn = document.getElementById("btn-mute-toggle");
+    const muted = isMuted();
+    btn.textContent = muted ? "🔇" : "🔊";
+    const label = muted ? "Unmute sounds" : "Mute sounds";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
   }
   document.getElementById("btn-mute-toggle").addEventListener("click", () => {
     setMuted(!isMuted());
@@ -2533,6 +2551,52 @@
   document.getElementById("btn-copy-catalog-link").addEventListener("click", () => {
     const code = getCatalogCode();
     if (code && code !== LOCAL_CATALOG) copyToClipboard(inviteURL("catalog", code));
+  });
+
+  // OCR photo import: entirely client-side (Tesseract.js runs as WASM in the
+  // browser — the photo is never uploaded anywhere), so this introduces no
+  // new attack surface and needs no backend, matching the rest of this app's
+  // architecture. It only ever FILLS the existing paste box, never saves on
+  // its own — a photographed workbook page (multi-word entries especially,
+  // see A5's Scramble fix) won't OCR cleanly enough to trust unread, so this
+  // has to stay "get text into the box," not "point phone, done."
+  document.getElementById("btn-catalog-scan").addEventListener("click", () => {
+    if (typeof Tesseract === "undefined") {
+      toast("Scan isn't available right now (needs an internet connection to load the first time) — you can still paste words by hand below.");
+      return;
+    }
+    document.getElementById("catalog-scan-input").click();
+  });
+  document.getElementById("catalog-scan-input").addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // lets picking the SAME file again re-fire change
+    if (!file) return;
+    const status = document.getElementById("catalog-scan-status");
+    const scanBtn = document.getElementById("btn-catalog-scan");
+    scanBtn.disabled = true;
+    status.textContent = "Scanning… (this can take a bit on a big photo)";
+    try {
+      const result = await Tesseract.recognize(file, "eng", {
+        logger: (m) => {
+          if (m.status === "recognizing text" && typeof m.progress === "number") {
+            status.textContent = `Scanning… ${Math.round(m.progress * 100)}%`;
+          }
+        },
+      });
+      const text = (result && result.data && result.data.text || "").trim();
+      if (!text) {
+        status.textContent = "Couldn't read any text in that photo — try a clearer, brighter shot, or paste by hand.";
+        return;
+      }
+      const box = document.getElementById("catalog-paste-input");
+      box.value = box.value.trim() ? box.value + "\n\n" + text : text;
+      box.scrollIntoView({ behavior: "smooth", block: "center" });
+      status.textContent = "Scanned — read it over and fix anything wrong before previewing.";
+    } catch (err) {
+      status.textContent = "Scan failed — try again, or paste the words by hand below.";
+    } finally {
+      scanBtn.disabled = false;
+    }
   });
 
   document.getElementById("btn-preview-catalog").addEventListener("click", () => {
@@ -4054,13 +4118,21 @@
     answerRow.innerHTML = "";
 
     scramble.answer.forEach((tileId, i) => {
-      const slot = document.createElement("div");
+      // A filled slot is a real <button> (not a div-with-click-handler) so a
+      // keyboard/switch user who can already place bank tiles (also buttons)
+      // can remove one too — an empty slot stays a plain div since it's a
+      // dashed placeholder with nothing to do.
+      let slot;
       if (tileId) {
         const tile = scramble.bank.find((t) => t.id === tileId);
+        slot = document.createElement("button");
+        slot.type = "button";
         slot.className = "scramble-tile filled";
         slot.textContent = tile.char.toUpperCase();
+        slot.setAttribute("aria-label", "Remove letter " + tile.char.toUpperCase());
         slot.addEventListener("click", () => removeFromAnswer(i));
       } else {
+        slot = document.createElement("div");
         slot.className = "scramble-tile empty-slot";
       }
       answerRow.appendChild(slot);

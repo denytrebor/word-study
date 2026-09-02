@@ -223,7 +223,7 @@ into an unrelated Firestore document.** Unlike the household-code field
 (`maxlength="6"`), the catalog-code input had no character restriction, and
 `connectCatalog()` passed it straight to `.doc(catalogCode)`. Firestore's SDK
 treats `/` in a doc-path argument as segment separators, not a literal
-character — a code like `zoelive/weeks/7-w1` doesn't create a catalog with a
+character — a code like `REDACTED-CATALOG-CODE/weeks/7-w1` doesn't create a catalog with a
 slash in its name, it resolves directly into that real, existing week
 document. Reachable not just by typing it but via a crafted `?catalog=`
 invite link that pre-fills the field with no visible slash — one click on
@@ -544,7 +544,7 @@ carrying the old field, and catalogs with no owner recorded, fail open to
 editable so nothing live gets locked out. **Manual cleanup worth doing: if any
 catalog doc in Firestore still has an `ownerHousehold` field, delete that field
 in the console** — the code no longer writes it but cannot scrub what is already
-there. HANDOFF's earlier note says the real `zoelive` catalog predates the field
+there. HANDOFF's earlier note says the real `REDACTED-CATALOG-CODE` catalog predates the field
 and so should be clean; worth confirming.
 
 **Medium — poisoned shared catalog content could crash other households.**
@@ -617,7 +617,7 @@ automatically on push, live within roughly 30–60 seconds.
 
 **Testing practice**: for anything touching the sync layer or catalog import,
 test against a throwaway household/catalog code first (not the real
-`9S6NU3`/`zoelive`), or serve `docs/`/the repo root locally via
+`REDACTED-HOUSEHOLD-CODE`/`REDACTED-CATALOG-CODE`), or serve `docs/`/the repo root locally via
 `python -m http.server` for a quick smoke test before deploying. Firestore
 rules allow `create`/`update` on household docs but **not `delete`** — a
 throwaway household can't actually be cleaned up after testing; leaving an
@@ -629,7 +629,7 @@ rename/delete" below. Students, progress, and activity stay non-deletable.)
 
 ## Current family data (real, live — do not touch as test cleanup)
 
-**Household `9S6NU3`**, catalog code **`zoelive`**:
+**Household `REDACTED-HOUSEHOLD-CODE`**, catalog code **`REDACTED-CATALOG-CODE`**:
 
 | Profile | Role | Grade | Notes |
 |---|---|---|---|
@@ -639,7 +639,7 @@ rename/delete" below. Students, progress, and activity stay non-deletable.)
 | Candice | parent | — | PIN-protected dashboard access |
 | Candice | parent | — | **Duplicate profile, same name** — not investigated or cleaned up, flagged to the user, no action taken |
 
-**Roman's Grade 7 catalog** (`catalogs/zoelive/weeks/7-w1` … `7-w9`): 9 weeks,
+**Roman's Grade 7 catalog** (`catalogs/REDACTED-CATALOG-CODE/weeks/7-w1` … `7-w9`): 9 weeks,
 one per workbook "List" (2 through 10), 30 words each (10 vocab w/ definitions
 + 20 spelling words). Labels read "Grade 7 · List N" (matching the physical
 book) even though the underlying doc ids/weekNumbers are sequential 1–9 — that
@@ -727,7 +727,7 @@ standing principle for any future migration this app does.
 for the same enumeration-risk reason `households`/`catalogs` already do)
 was applied via Firebase console → Firestore Database → Rules → Publish.
 The architect re-verified the full feature afterward end-to-end against
-real Firestore, throwaway households only, never `9S6NU3`/`zoelive`:
+real Firestore, throwaway households only, never `REDACTED-HOUSEHOLD-CODE`/`REDACTED-CATALOG-CODE`:
 `students/{id}` reachable and correctly `list`-denied; a legacy-shape
 profile migrates itself on load with nothing blanked; a real purchase
 persists correctly to the student doc; the original enrollment doc stays
@@ -1233,3 +1233,80 @@ number harder to reason about, not easier.
   (batch 8–10 words, horizontal/vertical only) but ranked behind Word Scramble
   by effort; nothing built.
 - **List 1** for Roman's Grade 7 catalog — never provided, not in the catalog.
+
+## Privacy policy accuracy pass, accessibility fixes, and OCR photo import (2026-09-02)
+
+Follow-up to a Fable 5.1 legal/privacy review the owner requested after the
+gamification build. Three unrelated pieces of work, all small and all live.
+
+**Privacy policy corrections** (`index.html`'s `#screen-legal`) — factual
+fixes only, no new legal clauses added (a limitation-of-liability clause,
+data-retention policy, etc. need an actual attorney, not an AI-drafted
+addition — see the review's punch list, not repeated here). The policy
+previously implied Firebase only activates "if a household chooses to turn
+on sync"; in reality `Sync.init()` calls `signInAnonymously()` on load
+regardless (`sync.js`), so the wording now says that plainly and clarifies
+that nothing is WRITTEN to Firebase until a household code is actually
+created/joined. Also added: a sentence disclosing the browser's own
+speech-recognition service is used by the mic button (Google's on Chrome,
+Apple's on Safari); a sentence naming GitHub Pages as host and Firebase as
+a third party operating under Google's own terms; broadened "personal
+family use" to "personal family or classroom use" in the Terms. The Class
+Roster paste placeholder (`index.html`) changed from full names
+(`Amelia Rivera, 5`) to first-name-only (`Amelia, 5`) to match the
+policy's "first name or nickname" framing and nudge real usage toward
+collecting less — `parseRosterText()` only ever splits on the first comma,
+so this needed no parser changes.
+
+**Accessibility fixes**, all found by reading the code, not a full audit:
+icon-only header/mic buttons (`btn-home`, `btn-mute-toggle`,
+`btn-switch-profile`, the three `*-mic` buttons) now carry `aria-label` in
+addition to `title`; `refreshMuteButton()` flips its label between "Mute
+sounds"/"Unmute sounds" with state instead of a static string. Every
+per-mode feedback div (`spell-feedback`, `review-feedback`,
+`vmatch-feedback`, `scramble-feedback`) and the shared `#toast` now carry
+`role="status" aria-live="polite"`, so correct/incorrect feedback and every
+toast reach a screen reader — deliberately did NOT make the header star
+count live, since its count-up animation would spam-announce every
+intermediate value. Word Scramble's filled answer slots
+(`renderScrambleTiles()`) are now real `<button>`s with an
+`aria-label="Remove letter X"` instead of `div`s with a click handler, so
+`removeFromAnswer` is keyboard-reachable the same way bank tiles already
+are; empty slots stay plain `div`s (nothing to activate). Nine
+placeholder-only inputs across profile creation, roster import, and parent
+self-manage got matching `aria-label`s. `showScreen()` now moves focus to
+the new screen's `h1`/`h2` (every screen has one) via a scripted
+`tabindex="-1"` — silent to a mouse/touch user (`:focus-visible` doesn't
+ring a programmatically-focused element), but a screen-reader/keyboard
+user is no longer left on a heading that's no longer there. Contrast:
+`--muted` moved from `#6b7280` (~4.3:1 against `--bg`, just under AA's
+4.5:1) to `#4b5563` (~6.7:1); `.streak-banner-text` and
+`.home-recommend-label` moved from `color: var(--accent)` (~2:1 against
+`--bg` — accent is a highlight color, never vetted as text) to
+`var(--primary-dark)`, which this app already trusts as body text
+(`.definition-box`, `.vmatch-choice`) — Galaxy theme gets its own override
+back to `var(--accent)` for those two selectors specifically, since its
+dark background needs a LIGHT accent-as-text, not a darker one (same
+reasoning as Galaxy's existing `--text`/`--card`/`--border`/`--muted`
+overrides above).
+
+**OCR photo import** (`js/app.js`, `index.html`'s catalog editor,
+Tesseract.js 5.1.1 pinned from jsdelivr) — a teacher can now tap
+"📷 Scan a Photo" in Manage Word Catalog to OCR a photo of a word list
+entirely client-side (WASM in the browser; the photo never leaves the
+device, so this adds no backend and no new attack surface, matching the
+app's architecture). The extracted text only ever FILLS the existing paste
+box — never auto-parses or auto-saves — because OCR on a photographed
+workbook page (this curriculum's own multi-word entries like
+"1 and 2 Samuel" included) isn't reliable enough to trust unread; it goes
+through the exact same preview → edit → save flow a manual paste already
+does. Guards against `Tesseract` being undefined (CDN didn't load, e.g.
+offline) with a toast rather than a crash. Verified live end-to-end
+against a real generated test image (three words, clean font) with 100%
+extraction accuracy and zero console errors; real workbook photos will be
+noisier, which is exactly why the review step stays mandatory. This is a
+deliberate, documented exception to `app.js`'s "no external library"
+confetti comment (which was about not needing one for a simple canvas
+effect, not a hard rule) — the app already loads Firebase from
+`gstatic.com`, so this isn't a new category of dependency, just one more
+pinned CDN script.

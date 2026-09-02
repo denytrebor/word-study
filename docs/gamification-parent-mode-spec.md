@@ -18,7 +18,7 @@ A vanilla-JS PWA (no build step, no framework) at `denytrebor.github.io/word-stu
     - `progress/{weekId}` — `{weekId, grade, label, words: [{id, text, definition, spelling: {attempts, correct}, vocab: {attempts, known}}]}`
 - `catalogs/{catalogCode}/weeks/{weekId}` — shared word lists (grade + week + words). Deliberately a separate top-level collection so sharing a catalog code can NEVER expose a household's scores. **Do not add any per-student data under `catalogs/`.**
 
-**Live production data exists:** household `9S6NU3`, catalog `zoelive`, profile "Micah" (grade 5). Migrations MUST be backward-compatible with existing profile docs (missing new fields must default sanely — the codebase's `load(key, fallback)` / `|| 0` idioms already handle this pattern; keep doing that).
+**Live production data exists:** household `REDACTED-HOUSEHOLD-CODE`, catalog `REDACTED-CATALOG-CODE`, profile "Micah" (grade 5). Migrations MUST be backward-compatible with existing profile docs (missing new fields must default sanely — the codebase's `load(key, fallback)` / `|| 0` idioms already handle this pattern; keep doing that).
 
 **Files:** `index.html` (all screens as `<section class="screen">`), `css/style.css` (design tokens as CSS custom props on `:root`), `js/app.js` (one IIFE, screen-per-section pattern), `js/sync.js` (`Sync` module wrapping Firestore), `service-worker.js` (network-first; **bump `CACHE_NAME` version on every release**).
 
@@ -269,7 +269,7 @@ Header shows parent name + a plain Exit (back to picker). Then **one card per st
 ## 7. Build order, testing, release
 
 1. §3 activity/streak plumbing first (medals' star caps depend on the activity doc), but ship UI in this order per feature: **§2 medals → §3 streak UI → §5 celebrations → §4 shop → §6 parent mode.** One feature per commit, tested locally in a real browser (the repo's established workflow: `python -m http.server`, click through with cleared localStorage AND with a simulated existing profile) before moving on.
-2. Never test against the live household `9S6NU3`/catalog `zoelive` — create throwaway households, then delete them from the Firestore console when done (established practice).
+2. Never test against the live household `REDACTED-HOUSEHOLD-CODE`/catalog `REDACTED-CATALOG-CODE` — create throwaway households, then delete them from the Firestore console when done (established practice).
 3. Bump `CACHE_NAME` in `service-worker.js` once per push (not per feature).
 4. Update the Firestore security rules ONLY if you add a collection outside existing matched paths — `activity/{date}` sits under `profiles/{profileId}`, which is already covered by the recursive match? **Check this:** the current rules match `progress/{weekId}` explicitly, not a wildcard under profiles. You WILL need to add an `activity/{date}` match block mirroring the `progress` one (auth-only). Rules are edited in the Firebase console (Firestore → Rules) — same auth-only shape as existing blocks.
 5. After all features: run one end-to-end pass as a fresh family (create household → parent → kid → import words → practice all modes → buy → check dashboard), then delete the test data and push.

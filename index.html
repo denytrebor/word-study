@@ -18,15 +18,15 @@
 
   <!-- HEADER (hidden on profile/household screens) -->
   <header id="app-header" class="hidden">
-    <button id="btn-home" class="icon-btn" title="Home">🏠</button>
+    <button id="btn-home" class="icon-btn" title="Home" aria-label="Home">🏠</button>
     <div class="header-info">
       <span id="header-profile-name"><span id="header-avatar"></span><span id="header-name-text">—</span></span>
       <span id="header-stars">⭐ <span id="header-stars-count">0</span></span>
     </div>
     <div class="header-right">
       <span id="sync-status-dot" class="sync-status-dot hidden" title="Synced"></span>
-      <button id="btn-mute-toggle" class="icon-btn" title="Mute sounds">🔊</button>
-      <button id="btn-switch-profile" class="icon-btn" title="Switch profile">🔀</button>
+      <button id="btn-mute-toggle" class="icon-btn" title="Mute sounds" aria-label="Mute sounds">🔊</button>
+      <button id="btn-switch-profile" class="icon-btn" title="Switch profile" aria-label="Switch profile">🔀</button>
     </div>
   </header>
 
@@ -41,7 +41,7 @@
       <p class="hint" id="household-code-hint" style="text-align:center;margin:0 0 8px;display:none;">Your code is filled in below — tap Join once to connect this device (and let your browser offer to remember it, so a wiped device can recover on its own).</p>
       <form id="join-household-form" class="new-profile-form" autocomplete="on">
         <input type="text" id="join-household-username" name="username" value="word-study-household" autocomplete="username" class="credential-username-field" tabindex="-1" aria-hidden="true">
-        <input type="password" id="join-household-code" name="password" placeholder="Enter household code" spellcheck="false" autocomplete="current-password" autocorrect="off" autocapitalize="characters" maxlength="6">
+        <input type="password" id="join-household-code" name="password" aria-label="Household code" placeholder="Enter household code" spellcheck="false" autocomplete="current-password" autocorrect="off" autocapitalize="characters" maxlength="6">
         <button type="button" id="btn-toggle-household-code" class="btn btn-ghost" aria-label="Show code">👁️</button>
         <button type="submit" id="btn-join-household" class="btn btn-secondary">Join</button>
       </form>
@@ -53,14 +53,14 @@
       <h1 class="app-title">📚 Word Study</h1>
       <p class="subtitle">Who's studying today?</p>
       <div id="profile-search-wrap" class="hidden">
-        <input type="text" id="profile-search-input" placeholder="Search students…" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="profile-search-input" aria-label="Search students" placeholder="Search students…" spellcheck="false" autocomplete="off" autocorrect="off">
       </div>
       <div id="profile-list" class="profile-grid"></div>
       <div id="parent-list" class="parent-row hidden"></div>
 
       <div id="parent-pin-entry" class="parent-pin-entry hidden">
         <p class="hint" id="parent-pin-prompt">Enter PIN for <strong id="parent-pin-name"></strong></p>
-        <input type="text" id="parent-pin-input" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off">
+        <input type="text" id="parent-pin-input" inputmode="numeric" maxlength="4" aria-label="PIN" placeholder="••••" autocomplete="off">
         <div class="parent-pin-actions">
           <button id="btn-parent-pin-submit" class="btn btn-primary">Enter</button>
           <button id="btn-parent-pin-cancel" class="btn btn-ghost">Cancel</button>
@@ -77,16 +77,16 @@
       </div>
 
       <div class="new-profile-form">
-        <input type="text" id="new-profile-name" placeholder="Student's name" spellcheck="false" autocomplete="off" autocorrect="off">
-        <input type="text" id="new-profile-grade" class="grade-field" placeholder="Grade" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="new-profile-name" aria-label="Student's name" placeholder="Student's name" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="new-profile-grade" class="grade-field" aria-label="Grade" placeholder="Grade" spellcheck="false" autocomplete="off" autocorrect="off">
         <button id="btn-add-profile" class="btn btn-primary">+ Add Student</button>
       </div>
       <button id="btn-add-class-roster" class="btn btn-ghost add-parent-link">👥 Add a Class Roster</button>
 
       <button id="btn-show-add-parent" class="btn btn-ghost add-parent-link">👨‍👧 Add a parent or teacher</button>
       <div id="add-parent-form" class="new-profile-form hidden">
-        <input type="text" id="new-parent-name" placeholder="Parent or teacher's name" spellcheck="false" autocomplete="off" autocorrect="off">
-        <input type="text" id="new-parent-pin" class="grade-field" inputmode="numeric" maxlength="4" placeholder="PIN" autocomplete="off">
+        <input type="text" id="new-parent-name" aria-label="Parent or teacher's name" placeholder="Parent or teacher's name" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="new-parent-pin" class="grade-field" inputmode="numeric" maxlength="4" aria-label="PIN" placeholder="PIN" autocomplete="off">
         <button id="btn-add-parent" class="btn btn-secondary">Create</button>
       </div>
       <p class="hint add-parent-hint hidden" id="add-parent-hint">The PIN is just to keep curious kids out — not real security. Forgot it? Add another parent profile.</p>
@@ -105,25 +105,25 @@
     <section id="screen-legal" class="screen">
       <h2>Privacy Policy &amp; Terms of Use</h2>
       <div class="legal-content">
-        <p class="legal-updated">Last updated: 2026-08-26</p>
+        <p class="legal-updated">Last updated: 2026-09-02</p>
 
         <h3>What this is</h3>
         <p>Word Study is a study tool built for a family's own kids — or a teacher's own class — to practice spelling and vocabulary words. It isn't a commercial product, there's no company behind it, and it isn't intended for the general public to sign up for — a parent or teacher sets it up for their own household or class.</p>
 
         <h3>Privacy Policy</h3>
         <h4>What information is collected</h4>
-        <p>Only what a parent types in while setting the app up: a student's first name or nickname and grade level, a 4-digit PIN chosen for the parent dashboard, and the word lists being studied. As the app is used, it records practice statistics (which words were answered correctly, accuracy over time, streaks) and preferences (equipped avatar, theme, in-app star balance). No email address, birthdate, physical address, or payment information is ever collected, because the app never asks for any of those.</p>
+        <p>Only what a parent or teacher types in while setting the app up: a student's first name or nickname and grade level, a 4-digit PIN chosen for the parent dashboard, and the word lists being studied. As the app is used, it records practice statistics (which words were answered correctly, accuracy over time, streaks) and preferences (equipped avatar, theme, in-app star balance). No email address, birthdate, physical address, or payment information is ever collected, because the app never asks for any of those. If the microphone button is used to answer by speaking instead of typing, the browser's own built-in speech recognition handles that — on most browsers, that means the audio is sent to that browser maker's speech service (for example Google's, on Chrome) to be converted to text; Word Study itself never stores audio and only ever receives the resulting typed-out words back.</p>
         <h4>Where it's stored</h4>
-        <p>Everything works fully offline, stored only in the browser's local storage on that device. If a household chooses to turn on "Sync across devices," the same information is also stored in Google Firebase (Firestore), so it can be reached from more than one device. Access to that stored data is controlled entirely by a short code your household chooses to share — anyone given that code can see and change that household's data, the same way anyone given a shared document link could. Word lists can additionally be shared across households on purpose, using a separate "catalog code," specifically so households can share the same list with each other.</p>
+        <p>Everything works fully offline, stored in the browser's local storage on that device. The app also connects to Google Firebase (Firestore) automatically every time it loads — this is required for it to work at all and isn't something that can be turned off — but nothing is written there for a device until a household code is created or joined; a device that's never connected to a household never has any of that student's data leave it. Once a household code is created or joined, the same information is also stored in Firebase, so it can be reached from more than one device. Access to that stored data is controlled entirely by a short code your household chooses to share — anyone given that code can see and change that household's data, the same way anyone given a shared document link could. Word lists can additionally be shared across households on purpose, using a separate "catalog code," specifically so households can share the same list with each other.</p>
         <h4>Children's privacy</h4>
-        <p>This app is meant to be set up and supervised by a parent, guardian, or teacher for their own children or class, not signed up for directly by a child. No advertising, behavioral tracking, or analytics services are used, and nothing collected here is ever sold or shared with third parties. The only outside service involved is Google Firebase, used strictly as private storage for the household or class that chooses to enable sync — never for advertising or analytics purposes.</p>
+        <p>This app is meant to be set up and supervised by a parent, guardian, or teacher for their own children or class, not signed up for directly by a child. No advertising, behavioral tracking, or analytics services are used, and nothing collected here is ever sold or shared with third parties. The outside services involved are Google Firebase, used strictly as private storage for any household that connects (Firebase is Google's own product, operated under Google's terms, not Word Study's), and GitHub Pages, which hosts this website and — like any web host — sees ordinary visit information such as IP address in its own server logs. Neither is used here for advertising or analytics.</p>
         <h4>Deleting your data</h4>
-        <p>Clearing your browser's site data for this app removes everything stored locally on that device. If cross-device sync was turned on, a copy also lives in Firebase; there is currently no self-service "delete my household" button in the app itself, so reach out using the contact info below to request that a household's stored data be deleted.</p>
+        <p>Clearing your browser's site data for this app removes everything stored locally on that device. If a household code was ever created or joined, a copy also lives in Firebase; there is currently no self-service "delete my household" button in the app itself, so reach out using the contact info below to request that a household's stored data be deleted.</p>
         <h4>Being honest about the security model</h4>
         <p>Access here is by shared code, not username-and-password accounts. That's a deliberate tradeoff to keep the app simple for a family to use, not an oversight — but it does mean anyone who has your household's code has full access to what's stored under it, the same as anyone holding a spare house key. Don't share your household code outside your own family or class.</p>
 
         <h3>Terms of Use</h3>
-        <p>This app is provided as-is, for personal family use, with no warranty of any kind — including no guarantee that it will always be available, that stored data will never be lost, or that it is free of bugs. It runs in part on a free tier of Google Firebase, which has its own usage limits; if those are ever exceeded the sync feature may stop working until the next day, though the app continues to work offline either way.</p>
+        <p>This app is provided as-is, for personal family or classroom use, with no warranty of any kind — including no guarantee that it will always be available, that stored data will never be lost, or that it is free of bugs. It runs in part on a free tier of Google Firebase, which has its own usage limits; if those are ever exceeded the sync feature may stop working until the next day, though the app continues to work offline either way.</p>
         <p>Please don't use the shared word-catalog feature to upload content that isn't an actual word list, or anything inappropriate, abusive, or illegal — it's meant to be shared between families using the app for its intended purpose. This app and how it works may change or be discontinued at any time without notice.</p>
 
         <h3>Contact</h3>
@@ -138,7 +138,7 @@
       <p class="hint">Paste one student per line — just a name, or <code>Name, Grade</code> to set a grade for that student. Blank lines are skipped.</p>
       <label class="hint roster-default-grade-label" for="roster-default-grade">Default grade for lines with no grade listed</label>
       <input type="text" id="roster-default-grade" class="roster-default-grade-input" placeholder="e.g. 5" spellcheck="false" autocomplete="off" autocorrect="off">
-      <textarea id="roster-paste-input" rows="10" placeholder="Amelia Rivera, 5&#10;Jonah Park&#10;Priya Natarajan, 5" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+      <textarea id="roster-paste-input" rows="10" placeholder="Amelia, 5&#10;Jonah&#10;Priya, 5" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
       <button id="btn-preview-roster" class="btn btn-secondary">Preview</button>
       <div id="roster-preview" class="results-list hidden"></div>
       <button id="btn-save-roster" class="btn btn-primary hidden">Add These Students</button>
@@ -172,7 +172,7 @@
       <div class="parent-self-manage">
         <p class="psc-section-title">Your profile</p>
         <div class="new-profile-form">
-          <input type="text" id="parent-self-name" placeholder="Your name" spellcheck="false" autocomplete="off" autocorrect="off">
+          <input type="text" id="parent-self-name" aria-label="Your name" placeholder="Your name" spellcheck="false" autocomplete="off" autocorrect="off">
           <button id="btn-parent-self-rename" class="btn btn-secondary">Save Name</button>
         </div>
         <button id="btn-parent-self-delete" class="btn btn-ghost parent-self-delete">Delete my parent profile</button>
@@ -202,7 +202,7 @@
       <h2>📚 Connect a Word Catalog</h2>
       <p class="hint">Word lists live in a catalog, organized by grade and week — separate from your private scores. Keep it just for your household, or give it a memorable code (like your school's name) to share the same lists with another family. Their scores stay completely separate from yours either way.</p>
       <div class="new-profile-form">
-        <input type="text" id="catalog-code-input" placeholder="Catalog code (or leave blank)" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="catalog-code-input" aria-label="Catalog code" placeholder="Catalog code (or leave blank)" spellcheck="false" autocomplete="off" autocorrect="off">
         <button id="btn-connect-catalog" class="btn btn-primary">Connect</button>
       </div>
       <p class="hint" style="margin-top:10px;">If the code doesn't exist yet, it'll be created. Leave it blank to get a private one just for your household.</p>
@@ -215,6 +215,10 @@
       <button id="btn-starter-lists-from-catalog" class="btn btn-secondary">⚡ Or load a ready-made starter list</button>
       <p class="hint catalog-readonly-note hidden" id="catalog-readonly-note"></p>
       <div id="catalog-editor-form">
+        <input type="file" id="catalog-scan-input" accept="image/*" capture="environment" class="hidden">
+        <button id="btn-catalog-scan" type="button" class="btn btn-ghost">📷 Scan a Photo</button>
+        <p class="hint" id="catalog-scan-status"></p>
+        <p class="hint">Scans a photo of a word list and fills the box below with what it reads — check it over before saving, OCR isn't perfect and a bad scan can be edited by hand just like a paste.</p>
         <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 3 (starts 2026-09-01)&#10;&#10;friend&#10;habit, something you do often&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;GRADE 7 (starts 2026-09-01)&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
         <button id="btn-preview-catalog" class="btn btn-secondary">Preview</button>
         <div id="catalog-preview" class="results-list hidden"></div>
@@ -369,12 +373,12 @@
 
         <div class="answer-row">
           <input type="text" id="spell-input" placeholder="Type the word here" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
-          <button id="spell-mic" class="icon-btn mic-btn hidden" title="Speak your answer">🎤</button>
+          <button id="spell-mic" class="icon-btn mic-btn hidden" title="Speak your answer" aria-label="Speak your answer">🎤</button>
         </div>
 
         <button id="spell-submit" class="btn btn-primary">Check</button>
 
-        <div id="spell-feedback" class="feedback hidden"></div>
+        <div id="spell-feedback" class="feedback hidden" role="status" aria-live="polite"></div>
         <button id="spell-continue" class="btn btn-secondary hidden">Continue →</button>
       </div>
       <button id="spell-exit" class="btn btn-ghost">Exit</button>
@@ -394,12 +398,12 @@
 
         <div class="answer-row">
           <input type="text" id="review-input" placeholder="Type the word here" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
-          <button id="review-mic" class="icon-btn mic-btn hidden" title="Speak your answer">🎤</button>
+          <button id="review-mic" class="icon-btn mic-btn hidden" title="Speak your answer" aria-label="Speak your answer">🎤</button>
         </div>
 
         <button id="review-submit" class="btn btn-primary">Check</button>
 
-        <div id="review-feedback" class="feedback hidden"></div>
+        <div id="review-feedback" class="feedback hidden" role="status" aria-live="polite"></div>
         <button id="review-continue" class="btn btn-secondary hidden">Continue →</button>
       </div>
       <button id="review-exit" class="btn btn-ghost">Exit</button>
@@ -461,7 +465,7 @@
 
         <div id="vmatch-choices" class="vmatch-choices"></div>
 
-        <div id="vmatch-feedback" class="feedback hidden"></div>
+        <div id="vmatch-feedback" class="feedback hidden" role="status" aria-live="polite"></div>
         <button id="vmatch-continue" class="btn btn-secondary hidden">Continue →</button>
       </div>
       <button id="vmatch-exit" class="btn btn-ghost">Exit</button>
@@ -482,7 +486,7 @@
         <div id="scramble-bank-row" class="scramble-row scramble-bank-row"></div>
 
         <button id="scramble-submit" class="btn btn-primary hidden">Submit</button>
-        <div id="scramble-feedback" class="feedback hidden"></div>
+        <div id="scramble-feedback" class="feedback hidden" role="status" aria-live="polite"></div>
         <button id="scramble-continue" class="btn btn-secondary hidden">Continue →</button>
       </div>
       <button id="scramble-exit" class="btn btn-ghost">Exit</button>
@@ -519,7 +523,7 @@
         <div id="test-spelling-ui">
           <div class="answer-row">
             <input type="text" id="test-input" placeholder="Type the word here" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
-            <button id="test-mic" class="icon-btn mic-btn hidden" title="Speak your answer">🎤</button>
+            <button id="test-mic" class="icon-btn mic-btn hidden" title="Speak your answer" aria-label="Speak your answer">🎤</button>
           </div>
         </div>
 
@@ -669,7 +673,7 @@
   </main>
 </div>
 
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
@@ -679,6 +683,7 @@
 <script src="js/shop-catalog.js"></script>
 <script src="js/starter-lists.js"></script>
 <script src="js/vendor/qrcode.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
