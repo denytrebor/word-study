@@ -155,33 +155,117 @@ const StarterLists = (function () {
     {
       grade: "5",
       label: "Grade 5 · Word Power",
-      description: "Multisyllable spelling and precise vocabulary.",
+      // Real curriculum content, not synthetic filler like the other grades'
+      // packs — transcribed and independently fact-checked from a physical
+      // Abeka-style spelling workbook (Lists 3-8 and 10; List 9 was that
+      // workbook's own review unit and was skipped since it only recombines
+      // words already covered here). Each week keeps the workbook's full word
+      // count instead of being trimmed to the ~8+4 convention the other packs
+      // use, since cutting real content down to match placeholder-pack sizing
+      // would throw away words the child's actual curriculum expects them to
+      // learn. Bible-book spelling words (e.g. "Deuteronomy") are kept as
+      // plain spelling entries with their printed abbreviation dropped, since
+      // the abbreviation is a workbook reference note, not part of the word.
+      description: "A real Abeka-style spelling curriculum, transcribed from a physical workbook.",
       weeks: [
         {
-          spelling: ["necessary", "separate", "definitely", "familiar", "calendar", "medicine", "sincerely", "beginning"],
+          // Spelling List 3
+          spelling: ["reapplying", "refrigerator", "rehearsal", "relapse", "relinquish", "resign", "boastful", "harmful", "neglectful", "plentiful", "purposeful", "suspenseful", "dedicate", "dictation", "dictator", "diction", "indicate", "indictment", "verdict", "vindicate", "Deuteronomy", "Joshua"],
           vocab: [
-            ["analyze", "to study something carefully to understand it"],
-            ["significant", "important enough to be worth noticing"],
-            ["reluctant", "unwilling; hesitant to act"],
-            ["perspective", "the way a person sees or thinks about something"],
+            ["consequences", "the results of some previous action"],
+            ["conveniences", "things that add comfort or save trouble"],
+            ["hues", "the basic names of colors"],
+            ["inquiries", "questions; searches for answers"],
+            ["missionaries", "those sent with the purpose of spreading the Gospel"],
+            ["opportunities", "favorable circumstances; chances for advancements"],
+            ["prophecies", "revelations about the future"],
+            ["similarities", "likenesses"],
           ],
         },
         {
-          spelling: ["achieve", "receive", "believe", "neighbor", "weight", "foreign", "either", "ceiling"],
+          // Spelling List 4
+          spelling: ["incomplete", "inconvenient", "inefficient", "infrequent", "injustice", "involuntary", "emphatic", "microscopic", "Olympics", "optimistic", "pessimistic", "therapeutic", "fundraiser", "profound", "unfounded", "forceful", "fortification", "fortified", "reinforcement", "uncomfortable", "Judges", "Ruth"],
           vocab: [
-            ["determine", "to figure out or decide firmly"],
-            ["abundant", "existing in large amounts; plentiful"],
-            ["adapt", "to change in order to fit a new situation"],
-            ["motive", "the reason someone does something"],
+            ["agrarian", "having to do with farming"],
+            ["conservation", "management or preservation of natural resources"],
+            ["cultivate", "to plow and prepare land for planting crops"],
+            ["erosion", "the wearing and carrying away of soil or rock by water or wind"],
+            ["foliage", "the leaves of a plant"],
+            ["hybrid", "a cross between two different species"],
+            ["irrigation", "a system designed to supply land with water"],
+            ["vegetation", "plant life"],
           ],
         },
         {
-          spelling: ["responsible", "opportunity", "environment", "experience", "government", "temperature", "immediately", "independent"],
+          // Spelling List 5
+          spelling: ["misaligned", "miscalculate", "misconceive", "misdiagnose", "misjudge", "mismanage", "churchgoers", "comforter", "gardener", "minister", "plumber", "recliner", "evacuate", "evacuee", "vacancy", "conjure", "injurious", "jurisdiction", "juror", "jury", "1 and 2 Samuel", "1 and 2 Kings"],
           vocab: [
-            ["objective", "a goal you are working toward"],
-            ["hesitate", "to pause because you are unsure"],
-            ["distinct", "clearly different from other things"],
-            ["assume", "to believe something is true without proof"],
+            ["alumni", "graduates of a school or college"],
+            ["bacteria", "microscopic, single-celled organisms"],
+            ["crises", "uncertain or challenging times often resulting from change or trouble"],
+            ["criteria", "standards or rules by which things can be judged"],
+            ["fungi", "plants which do not contain chlorophyll and cannot make their own food"],
+            ["larvae", "immature insects that do not look like adult insects"],
+            ["media", "newspapers, television, and other such means of mass communication"],
+            ["phenomena", "facts, events, or circumstances that can be observed"],
+          ],
+        },
+        {
+          // Spelling List 6
+          spelling: ["pre-algebra", "preamble", "prearranged", "predetermined", "predicate", "preoccupied", "assignment", "commandment", "equipment", "fragment", "parliament", "sediment", "consent", "dissent", "nonsensical", "resent", "sensitize", "sensor", "sentimental", "sentinel", "1 and 2 Chronicles", "Ezra"],
+          vocab: [
+            ["barbecue", "meat roasted over an open fire; a party or picnic where such meat is served"],
+            ["carbohydrates", "food nutrients that provide cells with energy"],
+            ["delicatessen", "a store that sells prepared food such as sandwiches, salads, cheese, or pickles"],
+            ["gourmet", "relating to food of fine quality"],
+            ["herbs", "leaves of certain plants used in cooking to add flavor to food"],
+            ["nutritious", "useful to the body as food"],
+            ["protein", "a nutrient which helps the body grow, repair, and replace cells and that helps build muscle tissue"],
+            ["sauté", "to fry lightly and quickly"],
+          ],
+        },
+        {
+          // Spelling List 7
+          spelling: ["debris", "deciduous", "declarative", "decrease", "despondent", "devalue", "eagerness", "effectiveness", "fitness", "godliness", "gratefulness", "worldliness", "evident", "provide", "providence", "supervise", "television", "video", "visionary", "visual", "Nehemiah", "Esther"],
+          vocab: [
+            ["encore", "an extra song or appearance in response to applause"],
+            ["octave", "the eight notes in a musical scale"],
+            ["opera", "a play in which most of the lines are sung"],
+            ["orchestra", "a large group of musicians playing string, woodwind, brass, and percussion instruments"],
+            ["quartet", "a group of four singers or musicians who perform together"],
+            ["soloist", "a musician who performs alone"],
+            ["sonata", "a long piece of music for one or two instruments"],
+            ["tempo", "the speed of a musical composition"],
+          ],
+        },
+        {
+          // Spelling List 8
+          spelling: ["foreboding", "foreground", "forerunner", "foresee", "foreshadow", "forewarn", "championship", "citizenship", "kinship", "leadership", "relationship", "sponsorship", "aquamarine", "aquatic", "aqueduct", "aqueous", "aquifer", "reviving", "survived", "viable", "Job", "Psalms"],
+          vocab: [
+            ["aerobics", "exercises that help the body use oxygen efficiently"],
+            ["calisthenics", "exercises to develop muscle tone, usually done without equipment"],
+            ["diversion", "something that relaxes and entertains"],
+            ["gymnastics", "an acrobatic sport that uses special equipment to display balance and strength"],
+            ["regimen", "a routine, as of diet or exercise, that is strictly followed"],
+            ["rivalry", "competition"],
+            ["sportsmanship", "conduct in sports that demonstrates fairness in winning and losing"],
+            ["tournament", "a series of contests in some sport"],
+          ],
+        },
+        {
+          // Spelling List 10 (List 9 was a review unit, deliberately skipped)
+          spelling: ["submarine", "substandard", "subtitle", "subtrahend", "subtropical", "suburban", "subzero", "brilliantly", "conveniently", "daily", "erroneously", "mightily", "nobly", "relentlessly", "audible", "audio", "audiologist", "audition", "auditory", "abbreviate", "abridge", "brevity", "briefly", "Proverbs", "Ecclesiastes"],
+          vocab: [
+            ["archipelago", "a group of many islands"],
+            ["delta", "the fertile land that collects at the mouth of some rivers"],
+            ["equator", "the imaginary line around the earth equally distant from the poles"],
+            ["estuary", "the place where the river meets the sea and fresh water mixes with salt water"],
+            ["isthmus", "a narrow strip of land connecting two larger bodies of land"],
+            ["legend", "the key that explains the pictures and symbols on a map"],
+            ["plateau", "a plain in the mountains; tableland"],
+            ["torrid", "extremely hot"],
+            ["tributary", "a stream that flows into a larger body of water"],
+            ["tropics", "the regions north and south near the equator"],
           ],
         },
       ],
