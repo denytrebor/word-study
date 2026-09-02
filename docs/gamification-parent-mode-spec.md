@@ -44,7 +44,7 @@ Make daily practice self-motivating for kids aged ~8–13, and give parents visi
 
 Build and TEST each feature before starting the next. Each section below has acceptance criteria.
 
-**Non-goals (do NOT build):** leaderboards, badges/achievements, weekly goals, teacher dashboards, streak freezes, any real authentication. These are later tiers.
+**Non-goals (do NOT build):** leaderboards, badges/achievements, weekly goals, teacher dashboards, streak freezes, any real authentication. These are later tiers. **Update, 2026-09-02:** streak freezes and a weekly-goal-shaped mechanic WERE eventually built (see §2's "Second gamification pass" bullet and `docs/HANDOFF.md`'s "Gamification, round 2") — deliberately not the rejected shapes, though. "Streak freeze" here meant a purchasable one (Duolingo's model); what shipped is an earned, automatic, unpurchasable shield with no shop entry. The weekly-goal-shaped one ("Gold the List") isn't a goal a parent/teacher sets — it's the medal system's own existing Gold threshold, aggregated to the week level.
 
 ---
 
@@ -85,6 +85,9 @@ Today: +1 star per correct answer, unbounded. Change to:
   - Completing a retry round (clearing all missed words): **+2 stars**
   - First session of the day (first answer recorded today): **+3 stars**
   - Daily streak milestone reached (3, 7, 14, 30, 60, 100 days): **+5, +10, +15, +25, +40, +75**
+- **Round-bonus daily cap:** unlike the per-word cap above, perfect-round/retry-clear/perfect-test bonuses aren't tied to a word, so a short list replayed on repeat (exit → re-enter → answer the same known words) could mint stars forever. Cap the perfect-round (+5), retry-clear (+2), and perfect-test (+5) bonuses combined at **8 paid bonuses per local calendar day**, tracked as `bonusRoundsToday` on the activity doc (§3). Past the cap the round still completes and celebrates (toast/sound/confetti) — it just stops naming a star amount, so hitting the cap reads as "no more bonus today," never as broken.
+- **Self-graded and off-grade answers pay no stars at all** (2026-09-01, see `docs/HANDOFF.md`'s "Anti-farming, round 2"): Flip & Rate's "I Knew It", Speed Quiz's "Got It" (either kind), and Vocab Test's "I Knew It" are self-reported, never checked — `recordAnswer(w, correct, statKind, { noStars: true })`. A week browsed from the week picker that doesn't match the profile's own grade also pays nothing (`offGradeWeek()`), so a student can't farm an easier grade's list. Stats and medals still update in both cases — only the currency/streak/goal side is cut off. Round-completion bonuses take a matching `canPay` argument so the same rule reaches perfect-round/retry-clear bonuses, not just per-answer stars.
+- **Second gamification pass (2026-09-02, see `docs/HANDOFF.md`'s "Gamification, round 2")** layered 8 more mechanics on top of everything above — a Session Wrap-Up screen, star fly-in/count-up, a next-medal nudge, hot-streak escalation, a Bonus Word, a "Gold the List" weekly trophy, "Beat Your Best" on test results, and an earned/automatic streak shield. Every new bonus routes through the SAME `awardCappedBonus`/`canPay` gates this section defines — none of it is a parallel economy. Full detail lives in HANDOFF.md, not duplicated here.
 
 All star mutations continue to flow through `addStars(n)` — extend it, don't fork it.
 
@@ -112,6 +115,7 @@ New subcollection: `households/{code}/profiles/{profileId}/activity/{YYYY-MM-DD}
   correct: 35,
   starsEarned: 18,
   starEarns: { wordId: n, … }, // per-word daily star cap tracking (§2)
+  bonusRoundsToday: 3,          // round-completion bonuses paid today, capped at 8 (§2)
   modes: { spelling: 2, vocab: 1, scramble: 1, test: 0, speed: 0, flashcard: 1 }, // session-starts per mode
   weekIds: ["5-w1"],           // which catalog weeks were practiced
 }

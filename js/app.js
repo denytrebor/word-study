@@ -50,7 +50,7 @@
   }
   function saveProgress(profileId, weekId, progress) {
     saveProgressLocal(profileId, weekId, progress);
-    if (firestoreReady()) Sync.pushProgress(profileId, weekId, progress);
+    if (firestoreReady()) scheduleProgressPush(profileId, weekId, progress);
   }
 
   function updateLocalProfileFields(id, fields) {
@@ -66,6 +66,15 @@
 
   function slugify(s) {
     return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "g";
+  }
+
+  // Real curriculum content includes multi-word entries ("1 and 2 Samuel") —
+  // collapsing any run of whitespace to one space (not just trimming the
+  // ends) before comparing keeps a word typed with a stray double space or
+  // trailing newline (mobile autocomplete does this) from grading wrong for
+  // a reason that has nothing to do with spelling.
+  function normalizeSpelling(s) {
+    return String(s).trim().replace(/\s+/g, " ").toLowerCase();
   }
 
   function shuffle(arr) {
@@ -299,8 +308,80 @@
     if (!state.profile) return;
     document.getElementById("header-avatar").innerHTML = avatarHtml(state.profile) + " ";
     document.getElementById("header-name-text").textContent = state.profile.name;
-    document.getElementById("header-stars").textContent = "⭐ " + (state.profile.stars || 0);
+    document.getElementById("header-stars-count").textContent = state.profile.stars || 0;
+    refreshSyncStatus();
   }
+
+  // A3: debounced, not immediate — persistProfile() runs on EVERY correct
+  // answer (via addStars), and an unbatched Firestore write per answer was
+  // roughly 3x the write volume the school-scale capacity math assumed. The
+  // local save above is still synchronous and unconditional, so nothing the
+  // kid sees ever waits on this; only the network write is delayed, and only
+  // up to SYNC_DEBOUNCE_MS — flushPendingSyncPushes() (called from
+  // flushActivity, which already fires at session end, every 10th answer,
+  // and tab-hidden) force-flushes it sooner whenever one of those moments
+  // that must not lose data happens first.
+  const SYNC_DEBOUNCE_MS = 2000;
+  let pendingProfilePush = null;
+  let profilePushTimer = null;
+  function scheduleProfilePush(profile) {
+    pendingProfilePush = profile;
+    clearTimeout(profilePushTimer);
+    profilePushTimer = setTimeout(flushPendingSyncPushes, SYNC_DEBOUNCE_MS);
+  }
+
+  let pendingProgressPush = null; // { profileId, weekId, progress }
+  let progressPushTimer = null;
+  function scheduleProgressPush(profileId, weekId, progress) {
+    pendingProgressPush = { profileId, weekId, progress };
+    clearTimeout(progressPushTimer);
+    progressPushTimer = setTimeout(flushPendingSyncPushes, SYNC_DEBOUNCE_MS);
+  }
+
+  // The one place both debounced pushes actually reach Firestore. Safe to
+  // call often (session-exit handlers all over the app already call
+  // flushActivity() unconditionally) — a no-op when nothing is pending.
+  function flushPendingSyncPushes() {
+    clearTimeout(profilePushTimer);
+    profilePushTimer = null;
+    if (pendingProfilePush) { trackSyncWrite(Sync.pushProfile(pendingProfilePush)); pendingProfilePush = null; }
+    clearTimeout(progressPushTimer);
+    progressPushTimer = null;
+    if (pendingProgressPush) {
+      trackSyncWrite(Sync.pushProgress(pendingProgressPush.profileId, pendingProgressPush.weekId, pendingProgressPush.progress));
+      pendingProgressPush = null;
+    }
+  }
+
+  // B6: a synced/pending/offline dot in the header — everything currently
+  // syncs fire-and-forget with failures reaching only console.warn, so on
+  // flaky school wifi a kid's stars visibly go up locally while the parent
+  // dashboard, reading from Firestore, still says "never practiced," with no
+  // on-screen hint why. Only tracks the hot per-answer writes funneled
+  // through flushPendingSyncPushes above (now that pushProfile/pushProgress
+  // return their settled write promise instead of firing and forgetting) —
+  // rare one-off admin writes (a rename, a catalog save) already surface
+  // their own toast and don't need an ambient indicator.
+  let pendingSyncWrites = 0;
+  function trackSyncWrite(promise) {
+    pendingSyncWrites++;
+    refreshSyncStatus();
+    Promise.resolve(promise).finally(() => {
+      pendingSyncWrites = Math.max(0, pendingSyncWrites - 1);
+      refreshSyncStatus();
+    });
+  }
+  function refreshSyncStatus() {
+    const dot = document.getElementById("sync-status-dot");
+    if (!dot) return;
+    if (!firestoreReady()) { dot.classList.add("hidden"); return; }
+    dot.classList.remove("hidden", "sync-online", "sync-pending", "sync-offline");
+    if (!navigator.onLine) { dot.classList.add("sync-offline"); dot.title = "Offline — saved on this device, will sync later"; }
+    else if (pendingSyncWrites > 0) { dot.classList.add("sync-pending"); dot.title = "Syncing…"; }
+    else { dot.classList.add("sync-online"); dot.title = "Synced"; }
+  }
+  window.addEventListener("online", refreshSyncStatus);
+  window.addEventListener("offline", refreshSyncStatus);
 
   function persistProfile() {
     if (!state.profile) return;
@@ -308,7 +389,7 @@
     const idx = profiles.findIndex((p) => p.id === state.profile.id);
     if (idx !== -1) profiles[idx] = state.profile;
     saveProfiles(profiles);
-    if (firestoreReady()) Sync.pushProfile(state.profile);
+    if (firestoreReady()) scheduleProfilePush(state.profile);
   }
 
   // `stars` is the spendable balance (shop purchases decrement it);
@@ -318,7 +399,39 @@
     state.profile.stars = (state.profile.stars || 0) + n;
     state.profile.lifetimeStars = (state.profile.lifetimeStars || 0) + n;
     persistProfile();
-    refreshHeader();
+    animateStarGain(n);
+  }
+
+  // Mechanic 2 ("star fly-in + count-up"): every award used to just snap the
+  // header number to its new value via refreshHeader(), so a +5 bonus and a
+  // +1 answer looked identical and were gone before the eye moved. addStars()
+  // is the one choke point every star mutation already goes through, so
+  // animating here reaches every award site for free — no per-mode wiring.
+  // Deliberately does NOT call refreshHeader(): that also repaints
+  // avatar/name, neither of which addStars ever changes, and re-running it
+  // mid count-up would stomp the tick below back to the final value early.
+  function animateStarGain(n) {
+    const el = document.getElementById("header-stars");
+    const countEl = document.getElementById("header-stars-count");
+    if (!el || !countEl) return;
+    refreshSyncStatus();
+    const to = state.profile.stars || 0;
+    const from = to - n;
+    const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (n <= 0 || reduceMotion) { countEl.textContent = to; return; }
+    const particle = document.createElement("span");
+    particle.className = "star-particle";
+    particle.textContent = "+" + n;
+    el.appendChild(particle);
+    setTimeout(() => particle.remove(), 900);
+    const start = performance.now();
+    const DURATION = 400;
+    function tick(now) {
+      const t = Math.min(1, (now - start) / DURATION);
+      countEl.textContent = Math.round(from + (to - from) * t);
+      if (t < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
   }
 
   function applyTheme(themeId) {
@@ -428,11 +541,15 @@
     document.removeEventListener("pointerdown", unlockAudioOnce);
   }, { once: true });
 
-  // kind: "correct" | "medal" | "purchase" | "streak" | "perfect" | "lockin" —
-  // a subtle single tone for plain correct answers, a two-note ascending
-  // chime for medal/purchase moments, a brighter three-note arpeggio for
-  // the big streak/perfect moments.
-  function playSound(kind) {
+  // kind: "correct" | "medal" | "purchase" | "streak" | "perfect" | "lockin" |
+  // "hotstreak" | "bonusword" — a subtle single tone for plain correct
+  // answers, a two-note ascending chime for medal/purchase moments, a
+  // brighter three-note arpeggio for the big streak/perfect moments.
+  // step (mechanic 4, "correct" only): the in-session streak count, capped at
+  // 8 — nudges the correct-answer tone up a little per step so a run of hits
+  // audibly climbs instead of every answer sounding identical, without ever
+  // going shrill.
+  function playSound(kind, step) {
     if (isMuted()) return;
     const ctx = ensureAudioContext();
     if (!ctx) return;
@@ -451,7 +568,14 @@
       osc.stop(now + startOffset + dur + 0.02);
     }
     if (kind === "correct") {
-      tone(660, 0, 0.12, 0.12);
+      tone(660 * Math.pow(2, Math.min(step || 0, 8) / 24), 0, 0.12, 0.12);
+    } else if (kind === "hotstreak") {
+      tone(783.99, 0, 0.1, 0.18, "triangle");
+      tone(987.77, 0.08, 0.14, 0.18, "triangle");
+    } else if (kind === "bonusword") {
+      tone(659.25, 0, 0.1, 0.16, "triangle");
+      tone(880, 0.08, 0.12, 0.16, "triangle");
+      tone(1174.66, 0.16, 0.2, 0.18, "triangle");
     } else if (kind === "lockin") {
       // Deliberately warmer and lower than "correct": a retype is a repair, not a
       // hit, and giving it the same tone as a first-try correct answer would make
@@ -532,6 +656,46 @@
     return "none";
   }
 
+  // Gamification mechanic 3 ("next-medal nudge"): the medal ladder is
+  // otherwise invisible until a threshold is actually crossed, so a kid never
+  // feels "one more for Silver." Mirrors wordMedal's own thresholds exactly —
+  // one table, read two ways. accuracyGated: raw correct-count target is
+  // already met, but the accuracy gate (silver/gold) isn't, so the NEXT
+  // correct answer isn't guaranteed to move the needle — callers should word
+  // that softly ("keep it up") rather than promise a number.
+  const MEDAL_THRESHOLDS = { none: { next: "Bronze", correct: 2, accuracy: 0 }, bronze: { next: "Silver", correct: 5, accuracy: 0.8 }, silver: { next: "Gold", correct: 8, accuracy: 0.9 } };
+  function medalProgress(w) {
+    const medal = wordMedal(w);
+    if (medal === "gold") return { nextMedal: null };
+    const t = MEDAL_THRESHOLDS[medal];
+    const totalCorrect = w.spelling.correct + w.vocab.known;
+    const totalAttempts = w.spelling.attempts + w.vocab.attempts;
+    const accuracy = totalAttempts ? totalCorrect / totalAttempts : 0;
+    return {
+      nextMedal: t.next,
+      correctNeeded: Math.max(0, t.correct - totalCorrect),
+      accuracyGated: totalAttempts > 0 && accuracy < t.accuracy,
+    };
+  }
+  function medalProgressText(w) {
+    const p = medalProgress(w);
+    if (!p.nextMedal) return null;
+    if (p.correctNeeded > 0) return `${p.correctNeeded} more for ${p.nextMedal}`;
+    if (p.accuracyGated) return `Keep it up for ${p.nextMedal}`;
+    return null;
+  }
+  // Appends the nudge to a correct-feedback element, if there's anything
+  // worth saying — one helper so every practice mode's feedback block reads
+  // it the same way instead of five near-duplicate string-builds.
+  function appendMedalNudge(feedbackEl, w) {
+    const text = medalProgressText(w);
+    if (!text) return;
+    const span = document.createElement("span");
+    span.className = "medal-nudge";
+    span.textContent = text;
+    feedbackEl.appendChild(span);
+  }
+
   // null = never practiced (so callers can sort it separately from a low-
   // but-nonzero accuracy word).
   function wordAccuracy(w) {
@@ -590,6 +754,8 @@
       correct: 0,
       starsEarned: 0,
       starEarns: {},
+      bonusRoundsToday: 0,
+      bonusWordsToday: 0,
       modes: { spelling: 0, vocab: 0, scramble: 0, test: 0, speed: 0, flashcard: 0 },
       weekIds: [],
     };
@@ -608,10 +774,45 @@
     return state.activity;
   }
 
+  // A4: getOrInitActivity() only ever reads localStorage, so a second device
+  // starts today's activity doc from zero — every cap (per-word, bonus-round,
+  // daily-goal, first-practice) resets, and pushActivity's merge:true would
+  // then let that smaller doc silently overwrite a bigger one server-side.
+  // Called once per profile-select (see selectProfile): fold today's remote
+  // doc into the local one by taking the max of every counter/map entry and
+  // OR-ing every boolean flag, so nothing already earned on another device
+  // can be lost or reset just by opening the app somewhere else.
+  function mergeActivityDocs(local, remote) {
+    if (!remote) return local;
+    const merged = Object.assign({}, local);
+    merged.answers = Math.max(local.answers || 0, remote.answers || 0);
+    merged.correct = Math.max(local.correct || 0, remote.correct || 0);
+    merged.starsEarned = Math.max(local.starsEarned || 0, remote.starsEarned || 0);
+    merged.bonusRoundsToday = Math.max(local.bonusRoundsToday || 0, remote.bonusRoundsToday || 0);
+    merged.bonusWordsToday = Math.max(local.bonusWordsToday || 0, remote.bonusWordsToday || 0);
+    merged.goalAwarded = !!local.goalAwarded || !!remote.goalAwarded;
+    merged.starEarns = Object.assign({}, remote.starEarns, local.starEarns);
+    Object.keys(remote.starEarns || {}).forEach((id) => {
+      merged.starEarns[id] = Math.max((local.starEarns || {})[id] || 0, remote.starEarns[id] || 0);
+    });
+    merged.modes = Object.assign({}, local.modes);
+    Object.keys(remote.modes || {}).forEach((m) => {
+      merged.modes[m] = Math.max((local.modes || {})[m] || 0, (remote.modes || {})[m] || 0);
+    });
+    merged.weekIds = Array.from(new Set([].concat(local.weekIds || [], remote.weekIds || [])));
+    return merged;
+  }
+
   function flushActivity() {
+    // Already the app's one shared "this moment must not lose data" signal
+    // (session end, every 10th answer, tab hidden — every call site above and
+    // below) — riding on it to force-flush the debounced profile/progress
+    // pushes too (see persistProfile/saveProgress) means A3's write-batching
+    // needed no new call sites of its own.
+    flushPendingSyncPushes();
     if (!state.activity || !state.profile) return;
     save(activityKey(state.profile.id, state.activity.date), state.activity);
-    if (firestoreReady()) Sync.pushActivity(state.profile.id, state.activity.date, state.activity);
+    if (firestoreReady()) trackSyncWrite(Sync.pushActivity(state.profile.id, state.activity.date, state.activity));
   }
 
   function recordModeStart(mode) {
@@ -624,15 +825,35 @@
   }
 
   // Streak update happens exactly once, at the first answer of a local day.
+  // Mechanic 8 ("Earned Streak Shield"): a banked shield — earned by
+  // studying, never bought, never managed — auto-spends on exactly one
+  // missed day so the streak continues as if uninterrupted. Only ever
+  // surfaces at the moment it SAVES something; never a warning about
+  // running low, never a countdown toward losing the streak.
   function ensureStreakForToday() {
     const p = state.profile;
     const today = todayLocalStr();
     if (p.lastActiveDate === today) return;
     const yesterday = localDateMinusDays(today, 1);
-    const newStreak = p.lastActiveDate === yesterday ? (p.currentStreak || 0) + 1 : 1;
+    const twoDaysAgo = localDateMinusDays(today, 2);
+    let newStreak;
+    if (p.lastActiveDate === yesterday) {
+      newStreak = (p.currentStreak || 0) + 1;
+    } else if (p.lastActiveDate === twoDaysAgo && (p.streakShields || 0) > 0) {
+      p.streakShields--;
+      newStreak = (p.currentStreak || 0) + 1;
+      toast("🛡️ Your shield kept your streak going!");
+    } else {
+      newStreak = 1;
+    }
     p.currentStreak = newStreak;
     p.bestStreak = Math.max(p.bestStreak || 0, newStreak);
     p.lastActiveDate = today;
+    // Banks one shield every 7 days of an active streak, capped at holding 1
+    // — a 14-day streak reached while already holding one doesn't stack a
+    // second. Checked after the shield-spend branch above so the very day a
+    // shield saves a streak can't also bank a fresh one in the same breath.
+    if (newStreak % 7 === 0 && (p.streakShields || 0) < 1) p.streakShields = (p.streakShields || 0) + 1;
     const bonus = STREAK_MILESTONES[newStreak];
     if (bonus) {
       addStars(bonus);
@@ -659,8 +880,23 @@
   // (Test Mode's whole design is "no feedback until the final score screen" —
   // a mid-test medal-up toast would leak whether that answer was correct).
   // Stats, stars, activity, and streak bookkeeping still happen either way.
+  // opts.noStars: self-graded modes (Flip & Rate's "I Knew It", Speed Quiz's
+  // "Got It", Vocab Test's "I Knew It") and off-grade weeks (see offGradeWeek
+  // below) have no verified answer or no grade-appropriate difficulty, so
+  // neither may touch a counter that mints currency: no per-word star, no
+  // first-practice bonus, no daily-goal credit, no streak advance (streak
+  // milestones pay real stars too). Word stats/medals still update either
+  // way — the Progress screen and per-word medals stay an honest reflection
+  // of practice — only the anti-farming surface is cut off.
+  // opts.streakStep (mechanic 4): recordAnswer has no idea what a caller's
+  // in-session streak counter is — that lives on each mode's own session
+  // object, incremented AFTER this call returns — so a caller that wants the
+  // correct-answer tone to reflect the streak passes the value it's ABOUT to
+  // become (session.streak + 1). Omit it and the tone plays flat, as before.
   function recordAnswer(w, correct, statKind, opts) {
     const silent = !!(opts && opts.silent);
+    const noStars = !!(opts && opts.noStars);
+    const streakStep = opts && opts.streakStep;
     const beforeMedal = wordMedal(w);
     const wasGoldBefore = beforeMedal === "gold";
 
@@ -673,21 +909,26 @@
     }
     const afterMedal = wordMedal(w);
 
-    const activity = getOrInitActivity();
-    const isFirstAnswerToday = activity.answers === 0;
-    activity.answers++;
-    if (correct) activity.correct++;
-
     let starsAwarded = 0;
-    if (correct) {
-      starsAwarded = starsForCorrectAnswer(w, wasGoldBefore, activity);
-      if (starsAwarded > 0) {
-        addStars(starsAwarded);
-        activity.starsEarned += starsAwarded;
-        activity.starEarns[w.id] = (activity.starEarns[w.id] || 0) + starsAwarded;
+    let activity = null;
+    let isFirstAnswerToday = false;
+    if (!noStars) {
+      activity = getOrInitActivity();
+      isFirstAnswerToday = activity.answers === 0;
+      activity.answers++;
+      if (correct) activity.correct++;
+      if (correct) {
+        starsAwarded = starsForCorrectAnswer(w, wasGoldBefore, activity);
+        if (starsAwarded > 0) {
+          addStars(starsAwarded);
+          activity.starsEarned += starsAwarded;
+          activity.starEarns[w.id] = (activity.starEarns[w.id] || 0) + starsAwarded;
+        }
       }
-      if (!silent) { playSound("correct"); reactBuddy("correct"); }
-    } else if (!silent) reactBuddy("miss");
+    }
+
+    if (correct) { if (!silent) { playSound("correct", streakStep); reactBuddy("correct"); } }
+    else if (!silent) reactBuddy("miss");
 
     const medalUp = MEDAL_RANK[afterMedal] > MEDAL_RANK[beforeMedal];
     if (medalUp && !silent) {
@@ -698,17 +939,46 @@
       reactBuddy("cheer");
     }
 
-    if (isFirstAnswerToday) {
-      ensureStreakForToday();
-      addStars(3);
-      toast("🌞 First practice today! +3 ⭐");
+    if (!noStars) {
+      if (isFirstAnswerToday) {
+        ensureStreakForToday();
+        addStars(3);
+        toast("🌞 First practice today! +3 ⭐");
+      }
+      checkDailyGoal(activity);
+      if (activity.answers % 10 === 0) flushActivity();
     }
 
-    checkDailyGoal(activity);
-
-    if (activity.answers % 10 === 0) flushActivity();
-
     return { starsAwarded, medalUp };
+  }
+
+  // A kid can browse another grade's list from the week picker (its own hint
+  // text suggests it) — fine for review or getting ahead, but paying full
+  // stars on a grade well below their own would make that the easiest way to
+  // farm currency. Stats/medals still record for any grade; only stars are
+  // gated. Smart Review is deliberately NOT run through this: it surfaces
+  // weak words from the child's OWN past weeks (which may be a past grade),
+  // not a grade being browsed into, and doesn't touch state.selectedWeek.
+  function offGradeWeek() {
+    return !!(state.selectedWeek && state.profile && state.selectedWeek.grade && state.profile.grade && state.selectedWeek.grade !== state.profile.grade);
+  }
+
+  // Anti-farming cap on ROUND bonuses (perfect round / retry-clear / perfect
+  // test, below): unlike starsForCorrectAnswer's per-word cap, these bonuses
+  // aren't tied to any one word, so a short list replayed on repeat (exit,
+  // re-enter, answer the same 4 known words) would otherwise mint unlimited
+  // stars per day. Tracked as a same-day count, not a star total, so a mix of
+  // +5/+2 bonuses shares one budget. Returns whether the bonus was actually
+  // paid; callers still show the "big" toast/celebration either way so
+  // reaching the cap reads as "no more stars today," not as a broken feature.
+  const MAX_BONUS_ROUNDS_PER_DAY = 8;
+
+  function awardCappedBonus(amount, activity) {
+    if ((activity.bonusRoundsToday || 0) >= MAX_BONUS_ROUNDS_PER_DAY) return false;
+    activity.bonusRoundsToday = (activity.bonusRoundsToday || 0) + 1;
+    addStars(amount);
+    activity.starsEarned = (activity.starsEarned || 0) + amount;
+    return true;
   }
 
   // Shared by Spelling/Vocab/Scramble, which all use a {queue, retry, round,
@@ -719,24 +989,212 @@
   // is what actually proves the round just completed had zero misses.
   // Returns whether a bonus fired so the caller can skip its own "complete"
   // toast in favor of this louder one.
-  function awardRoundCompletionBonus(session) {
+  // canPay: false for a session that can never mint stars (self-graded Flip &
+  // Rate, or any mode run against an off-grade week — see offGradeWeek). The
+  // round still completes and celebrates the same either way; it just never
+  // names a star amount when it can't back it up, same posture as the daily
+  // cap in awardCappedBonus above.
+  function awardRoundCompletionBonus(session, canPay) {
+    const activity = getOrInitActivity();
     if (session.round === 1 && !session.missedThisRound && session.queue.length >= 4) {
-      addStars(5);
-      toast("🌟 Perfect round! +5 ⭐");
+      const paid = canPay && awardCappedBonus(5, activity);
+      if (paid) session.starsThisSession = (session.starsThisSession || 0) + 5;
+      toast(paid ? "🌟 Perfect round! +5 ⭐" : "🌟 Perfect round!");
       celebrate("big");
       playSound("perfect");
       reactBuddy("cheer");
       return true;
     }
     if (session.round === 2 && !session.missedThisRound) {
-      addStars(2);
-      toast("💪 Cleared the retries! +2 ⭐");
+      const paid = canPay && awardCappedBonus(2, activity);
+      if (paid) session.starsThisSession = (session.starsThisSession || 0) + 2;
+      toast(paid ? "💪 Cleared the retries! +2 ⭐" : "💪 Cleared the retries!");
       celebrate("small");
       playSound("perfect");
       reactBuddy("cheer");
       return true;
     }
     return false;
+  }
+
+  // Mechanic 1 ("Session Wrap-Up") bookkeeping — called once right after
+  // every recordAnswer() in the five round-based modes so their session
+  // objects accumulate exactly what the wrap-up screen needs, without any
+  // mode needing a second pass over its own history at the end.
+  // starsThisSession accumulates from EVERY source that pays into a session
+  // this way, not just this function — awardRoundCompletionBonus,
+  // handleHotStreak, and checkBonusWord below all add to it too when their
+  // own bonus pays out, since none of those go through recordAnswer()'s
+  // return value. Missing any of them would make the wrap-up screen's
+  // number quietly wrong — smaller than what the header actually gained.
+  function trackSessionResult(session, w, result) {
+    session.starsThisSession = (session.starsThisSession || 0) + (result.starsAwarded || 0);
+    if (result.medalUp) (session.medalUps = session.medalUps || []).push({ word: w.text, medal: wordMedal(w) });
+    // bestStreak deliberately NOT touched here: this runs before the caller's
+    // own `session.streak++`, so reading session.streak now would always be
+    // one answer behind — each mode updates bestStreak itself, right after
+    // incrementing, so a session that goes correct-the-whole-way-through
+    // reports its TRUE final streak instead of one short of it.
+  }
+
+  // Mechanic 1: the payoff moment for Spelling/Vocab/Match/Scramble/Review
+  // used to be a 1.8s toast dumped straight back to Home — this is where it
+  // lands instead. showStars: false whenever the session paid no stars by
+  // POLICY (self-graded or off-grade), not just because none happened to be
+  // due — a session like that gets framed around medals/correctness, never a
+  // stars tally that would just read as "0" and look broken. wordSet: the
+  // full word list the session was built from (not the queue, which may be
+  // mid-consumed or down to a retry subset) — used to find the single word
+  // closest to its next medal for the "next time" line. replay: fn that
+  // relaunches the same mode on the same word set; omit to hide the button
+  // (Smart Review's pool is recomputed fresh each time, so "again" there is
+  // just "open Smart Review," not a literal replay of this exact set).
+  let wrapUpReplay = null;
+  function showSessionWrapUp(session, { title, showStars, wordSet, replay, extraNudge }) {
+    wrapUpReplay = replay || null;
+    document.getElementById("wrapup-title").textContent = title;
+
+    const starsRow = document.getElementById("wrapup-stars-row");
+    if (showStars) {
+      document.getElementById("wrapup-stars-count").textContent = session.starsThisSession || 0;
+      starsRow.classList.remove("hidden");
+    } else starsRow.classList.add("hidden");
+
+    const medals = session.medalUps || [];
+    const medalWrap = document.getElementById("wrapup-medals");
+    if (medals.length) {
+      medalWrap.innerHTML = medals
+        .map((m) => `<div class="wrapup-medal-row">${MEDAL_ICON[m.medal]} "${escapeAttr(m.word)}" leveled up to ${m.medal.charAt(0).toUpperCase() + m.medal.slice(1)}!</div>`)
+        .join("");
+      medalWrap.classList.remove("hidden");
+    } else medalWrap.classList.add("hidden");
+
+    const streakEl = document.getElementById("wrapup-streak");
+    if ((session.bestStreak || 0) >= 3) {
+      streakEl.textContent = `🔥 Best streak this round: ${session.bestStreak}`;
+      streakEl.classList.remove("hidden");
+    } else streakEl.classList.add("hidden");
+
+    // The single word closest to its next medal, across the whole set this
+    // session drew from — not just the words seen this round, so the nudge
+    // still points somewhere useful on a short retry-only pass.
+    let nudgeText = "";
+    if (Array.isArray(wordSet) && wordSet.length) {
+      let best = null;
+      wordSet.forEach((w) => {
+        const p = medalProgress(w);
+        if (p.nextMedal && p.correctNeeded > 0 && (!best || p.correctNeeded < best.correctNeeded)) best = { word: w.text, correctNeeded: p.correctNeeded, nextMedal: p.nextMedal };
+      });
+      if (best) nudgeText = `"${best.word}" is ${best.correctNeeded} correct answer${best.correctNeeded === 1 ? "" : "s"} from ${best.nextMedal} next time.`;
+    }
+    if (extraNudge) nudgeText = nudgeText ? extraNudge + " " + nudgeText : extraNudge;
+    const nudgeEl = document.getElementById("wrapup-nudge");
+    nudgeEl.textContent = nudgeText;
+    nudgeEl.classList.toggle("hidden", !nudgeText);
+
+    document.getElementById("wrapup-play-again").classList.toggle("hidden", !replay);
+    showScreen("session-wrapup");
+  }
+  document.getElementById("wrapup-play-again").addEventListener("click", () => { if (wrapUpReplay) wrapUpReplay(); });
+  document.getElementById("wrapup-home").addEventListener("click", () => { renderHome(); showScreen("home"); });
+
+  // Names what a streak of 5+ actually achieved the moment it ends (a miss —
+  // the only place session.streak is ever reset to 0), instead of the streak
+  // badge just silently vanishing. Never says the streak "ended" or was
+  // "lost" — only ever surfaces what was reached. Every streak-reset site
+  // below calls this instead of setting `session.streak = 0` directly.
+  function endStreak(session) {
+    if ((session.streak || 0) >= 5) toast(`That was a ${session.streak}-streak — nice!`);
+    session.streak = 0;
+  }
+
+  // Mechanic 4 ("hot-streak escalation") — a small named burst at streak
+  // milestones, on top of the per-answer pitch-rise already in playSound().
+  // Routed through the shared 8/day round-bonus budget so it can't mint
+  // currency independently of every other bonus in this file. canPay: false
+  // (self-graded/off-grade) skips the bonus AND the burst sound entirely —
+  // a session that can't back up a payout shouldn't sound like it just
+  // earned one; the plain per-answer pitch-rise still plays regardless.
+  const HOT_STREAK_BONUSES = { 5: 2, 10: 3, 15: 4 };
+  function handleHotStreak(session, canPay) {
+    const bonus = HOT_STREAK_BONUSES[session.streak];
+    if (!bonus || !canPay) return;
+    const paid = awardCappedBonus(bonus, getOrInitActivity());
+    if (paid) session.starsThisSession = (session.starsThisSession || 0) + bonus;
+    toast(paid ? `🔥 On fire! ${session.streak} in a row! +${bonus} ⭐` : `🔥 On fire! ${session.streak} in a row!`);
+    celebrate("small");
+    playSound("hotstreak");
+  }
+
+  // Mechanic 5 ("Bonus Word") — one word per session is secretly worth more,
+  // weighted toward the profile's own weaker words (via wordsNeedingWork's
+  // existing worst-accuracy-first ranking) rather than a flat random pick, so
+  // the surprise also happens to aim at what's worth studying. Biased toward
+  // the weaker HALF rather than always the single weakest word, so it stays
+  // a surprise even for a kid who already knows which word they're worst at.
+  function pickBonusWord(list) {
+    if (!Array.isArray(list) || list.length < 2) return null;
+    const weak = wordsNeedingWork({ words: list });
+    const pool = weak.length ? weak.slice(0, Math.max(1, Math.ceil(weak.length / 2))) : list;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+  const MAX_BONUS_WORDS_PER_DAY = 5;
+  function awardBonusWord(amount, activity) {
+    if ((activity.bonusWordsToday || 0) >= MAX_BONUS_WORDS_PER_DAY) return false;
+    activity.bonusWordsToday = (activity.bonusWordsToday || 0) + 1;
+    addStars(amount);
+    activity.starsEarned = (activity.starsEarned || 0) + amount;
+    return true;
+  }
+  // Called from a mode's correct branch only — a miss on the bonus word is
+  // just a normal miss, no reveal, no "you missed it" framing. canPay: false
+  // (self-graded/off-grade) means no reveal at all, since a self-report
+  // can't prove the word was actually known. Guards against re-firing if the
+  // same session somehow revisits the word (a retry round, say).
+  function checkBonusWord(session, w, canPay) {
+    if (!canPay || !session.bonusWordId || session.bonusWordId !== w.id || session.bonusWordAwarded) return;
+    session.bonusWordAwarded = true;
+    const paid = awardBonusWord(3, getOrInitActivity());
+    if (paid) session.starsThisSession = (session.starsThisSession || 0) + 3;
+    toast(paid ? "🎁 Bonus word! +3 ⭐" : "🎁 Bonus word!");
+    celebrate("small");
+    playSound("bonusword");
+  }
+  // For the wrap-up screen's "get it next time" line when the bonus word was
+  // set but never reached correctly this session.
+  function bonusWordMissedNudge(session, wordSet) {
+    if (!session.bonusWordId || session.bonusWordAwarded) return "";
+    const w = (wordSet || []).find((x) => x.id === session.bonusWordId);
+    return w ? `The bonus word was "${w.text}" — get it next time!` : "";
+  }
+
+  // Mechanic 6 ("Gold the List") — a permanent, one-time trophy per week
+  // when every word in it reaches Gold. Checked against the FULL current
+  // week (state.progress.words), never a session's own subset (e.g.
+  // "practice the ones I missed") — completing the list is about the whole
+  // week, not whichever slice a round happened to cover. off-grade weeks are
+  // excluded via offGradeWeek() so browsing an easier grade can't mint a
+  // false trophy; a true one-time-per-week event (not a daily budget), so it
+  // checks the trophy map directly instead of routing through
+  // awardCappedBonus. Called after any round finishes in the three
+  // real-answer modes (Spelling/Match/Scramble) — not Vocab Flip & Rate
+  // (self-graded, can't verify Gold honestly) or Smart Review (its words
+  // aren't state.progress.words, they're scattered across other weeks').
+  const GOLD_LIST_BONUS = 15;
+  function checkGoldTheList() {
+    if (!state.profile || !state.progress || offGradeWeek()) return;
+    const words = state.progress.words;
+    if (!words.length || !words.every((w) => wordMedal(w) === "gold")) return;
+    const weekId = state.progress.weekId;
+    state.profile.weekTrophies = state.profile.weekTrophies || {};
+    if (state.profile.weekTrophies[weekId]) return;
+    state.profile.weekTrophies[weekId] = todayLocalStr();
+    addStars(GOLD_LIST_BONUS);
+    toast(`🏆 "${state.progress.label || weekId}" is all Gold!`);
+    celebrate("big");
+    playSound("perfect");
+    reactBuddy("cheer");
+    persistProfile();
   }
 
   /* ---------------------------------------------------------------------
@@ -863,6 +1321,8 @@
     if (typeof data.equippedAvatar === "string" && data.equippedAvatar !== state.profile.equippedAvatar) fields.equippedAvatar = data.equippedAvatar;
     if (typeof data.equippedTheme === "string" && data.equippedTheme !== state.profile.equippedTheme) fields.equippedTheme = data.equippedTheme;
     if (typeof data.lifetimeStars === "number" && data.lifetimeStars !== state.profile.lifetimeStars) fields.lifetimeStars = data.lifetimeStars;
+    if (data.weekTrophies && typeof data.weekTrophies === "object" && JSON.stringify(data.weekTrophies) !== JSON.stringify(state.profile.weekTrophies)) fields.weekTrophies = data.weekTrophies;
+    if (typeof data.streakShields === "number" && data.streakShields !== state.profile.streakShields) fields.streakShields = data.streakShields;
     if (Object.keys(fields).length === 0) return;
     Object.assign(state.profile, fields);
     updateLocalProfileFields(state.profile.id, fields);
@@ -883,6 +1343,13 @@
   }
 
   async function selectProfile(id) {
+    // pendingProfilePush/pendingProgressPush (see persistProfile/saveProgress)
+    // are single global slots, not per-profile — switching profiles (the
+    // header's 🔀 button reaches this mid-session, without going through any
+    // mode's exit handler) before a debounced write for the OUTGOING profile
+    // has fired would otherwise let the incoming profile's next write
+    // silently clobber it before it ever reaches Firestore.
+    flushPendingSyncPushes();
     const profiles = getProfiles();
     const p = profiles.find((x) => x.id === id);
     if (!p) return;
@@ -897,7 +1364,28 @@
     refreshHeader();
     applyTheme(p.equippedTheme);
     getOrInitActivity();
-    if (firestoreReady()) Sync.watchProfile(id, applyRemoteProfileUpdate);
+    if (firestoreReady()) {
+      Sync.watchProfile(id, applyRemoteProfileUpdate);
+      try {
+        const remote = await Sync.fetchActivityRange(id, [state.activity.date]);
+        if (remote.length) {
+          state.activity = mergeActivityDocs(state.activity, remote[0]);
+          save(activityKey(id, state.activity.date), state.activity);
+          trackSyncWrite(Sync.pushActivity(id, state.activity.date, state.activity));
+        }
+      } catch (e) { /* local doc already in place — fine offline */ }
+      // Smart Review's pool is normally local-only (see loadAllProgressDocs),
+      // so a brand-new or iOS-wiped device starts with an empty review queue
+      // even though the student has real practiced weeks sitting in
+      // Firestore. Seed the local cache once, only when it's actually empty,
+      // so this never overwrites a fuller local index with a stale remote one.
+      if (!load(progressIndexKey(id), []).length) {
+        try {
+          const docs = await Sync.fetchAllProgress(id);
+          docs.forEach((doc) => { if (doc && doc.weekId) saveProgressLocal(id, doc.weekId, doc); });
+        } catch (e) { /* ignore — review just stays empty until this device practices */ }
+      }
+    }
     await loadCatalogAndWeek();
   }
 
@@ -1346,6 +1834,17 @@
             <span>⭐ ${student.stars || 0} <span style="font-weight:400;color:var(--muted)">(${student.lifetimeStars || 0} lifetime)</span></span>
             <span>🔥 ${student.currentStreak || 0} <span style="font-weight:400;color:var(--muted)">(best ${student.bestStreak || 0})</span></span>
           </div>
+          <button class="psc-edit-toggle" data-edit-toggle="${student.id}" title="Edit name or grade">✏️</button>
+        </div>
+        <div class="psc-edit-form hidden" data-edit-form="${student.id}">
+          <div class="new-profile-form">
+            <input type="text" class="psc-edit-name" value="${escapeAttr(student.name)}" placeholder="Student's name" spellcheck="false" autocomplete="off" autocorrect="off">
+            <input type="text" class="psc-edit-grade grade-field" value="${escapeAttr(student.grade || "")}" placeholder="Grade" spellcheck="false" autocomplete="off" autocorrect="off">
+          </div>
+          <div class="psc-edit-actions">
+            <button class="btn btn-secondary" data-edit-save="${student.id}">Save</button>
+            <button class="btn btn-ghost" data-edit-cancel="${student.id}">Cancel</button>
+          </div>
         </div>
 
         <p class="psc-usage-line">Last practiced: <strong>${relativeDateLabel(student.lastActiveDate)}</strong></p>
@@ -1365,6 +1864,35 @@
       </div>`;
   }
 
+  // C1: every student's current-week progress doc is already fetched by
+  // loadParentDashboard below (loadStudentDashboardData) purely to build
+  // each student's own card — this is a second pass over that SAME data, no
+  // new reads, answering the question a teacher actually has on a Thursday
+  // ("what should tonight's practice focus on?") instead of 25 separate
+  // per-student needs-work lists. "Shaky" only (wordStatus), not
+  // never-attempted — this card is about difficulty, not who hasn't started.
+  function renderHardestWordsCard(results) {
+    const counts = new Map();
+    results.forEach(({ progress }) => {
+      if (!progress || !Array.isArray(progress.words)) return;
+      progress.words.forEach((w) => {
+        if (wordStatus(w) === "shaky") counts.set(w.text, (counts.get(w.text) || 0) + 1);
+      });
+    });
+    const entries = Array.from(counts.entries()).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    if (!entries.length) return "";
+    const total = results.length;
+    const rows = entries
+      .map(([text, n]) => `<div class="psc-needs-work-row"><span>${escapeAttr(text)}</span><span>${n} of ${total} student${total === 1 ? "" : "s"} shaky</span></div>`)
+      .join("");
+    return `<div class="parent-student-card"><p class="psc-section-title">This week's hardest words (whole class)</p><div class="psc-needs-work">${rows}</div></div>`;
+  }
+
+  // C2: kept in module scope so the roster table's expand-on-tap (below) can
+  // find one student's full data without a second Firestore round trip —
+  // loadParentDashboard already fetched it a moment ago.
+  let lastDashboardResults = [];
+
   async function loadParentDashboard() {
     const wrap = document.getElementById("parent-dash-cards");
     const students = getProfiles().filter((p) => p.role !== "parent");
@@ -1380,7 +1908,92 @@
     // Bail if the parent exited (or a different one entered) while this
     // was in flight — don't clobber whatever screen is showing now.
     if (!state.parentProfile) return;
-    wrap.innerHTML = results.map(renderStudentCard).join("");
+    lastDashboardResults = results;
+    const hardestCard = renderHardestWordsCard(results);
+    // Same threshold spirit as the profile picker's own search cutoff
+    // (PROFILE_SEARCH_THRESHOLD): a full card per kid is fine for a family
+    // of 2-4, but a class of 25 turns "who hasn't started this week?" into a
+    // very long scroll. Full detail is one tap away, not gone.
+    wrap.innerHTML = hardestCard + (students.length > PROFILE_SEARCH_THRESHOLD ? renderRosterTable(results) : results.map(renderStudentCard).join(""));
+  }
+
+  // Least-active-first by default — that's the actual question a teacher
+  // opens this for ("who hasn't practiced?"), not alphabetical order.
+  // lastActiveDate sorts correctly as a plain string (YYYY-MM-DD) and an
+  // empty one (never practiced) correctly sorts first.
+  function renderRosterTable(results) {
+    const sorted = results.slice().sort((a, b) => (a.student.lastActiveDate || "").localeCompare(b.student.lastActiveDate || ""));
+    const rows = sorted.map(({ student, dates, activityByDate, progress }) => {
+      const weekAnswers = dates.reduce((sum, d) => sum + ((activityByDate[d] && activityByDate[d].answers) || 0), 0);
+      const medals = { gold: 0, silver: 0, bronze: 0 };
+      (progress ? progress.words : []).forEach((w) => { const m = wordMedal(w); if (medals[m] !== undefined) medals[m]++; });
+      const needsWork = wordsNeedingWork(progress).length;
+      return `
+        <tr class="roster-row" data-roster-toggle="${student.id}">
+          <td class="roster-name"><span class="avatar">${avatarHtml(student)}</span>${escapeAttr(student.name)}</td>
+          <td>${relativeDateLabel(student.lastActiveDate)}</td>
+          <td>${weekAnswers}</td>
+          <td>🥇${medals.gold} 🥈${medals.silver} 🥉${medals.bronze}</td>
+          <td>${needsWork}</td>
+        </tr>
+        <tr class="roster-detail-row hidden" data-roster-detail="${student.id}"><td colspan="5"></td></tr>`;
+    }).join("");
+    return `<div class="roster-table-wrap"><table class="roster-table">
+      <thead><tr><th>Student</th><th>Last practiced</th><th>Answers this wk</th><th>Medals</th><th>Needs work</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
+  // A student's grade only ever gets SET at creation (createStudentProfile) —
+  // there was no edit path at all before this, which matters most exactly
+  // once a year (promotion) and once per roster typo caught on day one. Wired
+  // as one delegated listener on the container, not per-card handlers,
+  // because loadParentDashboard() replaces every card's innerHTML wholesale
+  // on every refresh — element-level listeners would just be discarded.
+  // Deliberately no delete here: see the comment on PARENT SELF-MANAGE above.
+  document.getElementById("parent-dash-cards").addEventListener("click", (e) => {
+    const rosterRow = e.target.closest("[data-roster-toggle]");
+    if (rosterRow) {
+      const id = rosterRow.getAttribute("data-roster-toggle");
+      const detailRow = document.querySelector(`[data-roster-detail="${id}"]`);
+      if (!detailRow) return;
+      const opening = detailRow.classList.contains("hidden");
+      detailRow.classList.toggle("hidden");
+      // Lazy-filled on first expand, not up front for every row — the whole
+      // point of the compact table is not rendering N full cards at once.
+      if (opening && !detailRow.dataset.loaded) {
+        const data = lastDashboardResults.find((r) => r.student.id === id);
+        if (data) { detailRow.querySelector("td").innerHTML = renderStudentCard(data); detailRow.dataset.loaded = "1"; }
+      }
+      return;
+    }
+    const toggleBtn = e.target.closest("[data-edit-toggle]");
+    if (toggleBtn) {
+      const form = document.querySelector(`.psc-edit-form[data-edit-form="${toggleBtn.getAttribute("data-edit-toggle")}"]`);
+      if (form) form.classList.toggle("hidden");
+      return;
+    }
+    const cancelBtn = e.target.closest("[data-edit-cancel]");
+    if (cancelBtn) {
+      const form = document.querySelector(`.psc-edit-form[data-edit-form="${cancelBtn.getAttribute("data-edit-cancel")}"]`);
+      if (form) form.classList.add("hidden");
+      return;
+    }
+    const saveBtn = e.target.closest("[data-edit-save]");
+    if (saveBtn) saveStudentEdit(saveBtn.getAttribute("data-edit-save"));
+  });
+
+  function saveStudentEdit(id) {
+    const form = document.querySelector(`.psc-edit-form[data-edit-form="${id}"]`);
+    if (!form) return;
+    const name = form.querySelector(".psc-edit-name").value.trim().slice(0, ROSTER_NAME_MAX);
+    const grade = form.querySelector(".psc-edit-grade").value.trim();
+    if (!name) { toast("Type a name first"); return; }
+    updateLocalProfileFields(id, { name, grade });
+    const updated = getProfiles().find((p) => p.id === id);
+    if (firestoreReady() && updated) Sync.pushProfile(updated);
+    toast("Saved");
+    loadParentDashboard();
   }
 
   /* ---------------------------------------------------------------------
@@ -1561,7 +2174,31 @@
     return progress;
   }
 
+  function lastSeenWeekKey(profileId) { return `ws_last_seen_week_${profileId}`; }
+
+  // B1: a one-time closure moment for the week that just ended, shown the
+  // first time Home actually auto-advances onto a new one — otherwise a
+  // week's medals just silently vanish behind whatever's now current, with
+  // nothing marking that a week finished. AUTO path only (manual==true, the
+  // "Change Week" picker, must never trigger this — browsing older weeks on
+  // purpose isn't a rollover) and fires at most once per transition, tracked
+  // by the last week id this device saw for this profile.
+  function checkWeekRollover(profileId, newWeek) {
+    const key = lastSeenWeekKey(profileId);
+    const lastSeenId = localStorage.getItem(key);
+    localStorage.setItem(key, newWeek.id);
+    if (!lastSeenId || lastSeenId === newWeek.id) return;
+    const prior = load(progressKey(profileId, lastSeenId), null);
+    if (!prior || !Array.isArray(prior.words) || !prior.words.length) return;
+    const counts = { gold: 0, silver: 0 };
+    prior.words.forEach((w) => { const m = wordMedal(w); if (counts[m] !== undefined) counts[m]++; });
+    if (!counts.gold && !counts.silver) return; // nothing practiced last week — not worth a recap
+    toast(`📋 Last week: 🥇 ${counts.gold} · 🥈 ${counts.silver} — new list!`);
+    celebrate("small");
+  }
+
   async function selectWeek(week, manual) {
+    if (!manual) checkWeekRollover(state.profile.id, week);
     state.selectedWeek = week;
     if (manual) save(selectedWeekKey(state.profile.id), week.id);
     state.progress = await loadProgressForWeek(state.profile.id, week);
@@ -1612,7 +2249,21 @@
 
     let week = null;
     const savedWeekId = localStorage.getItem(selectedWeekKey(state.profile.id));
-    if (savedWeekId) week = state.catalogWeeks.find((w) => w.id === savedWeekId);
+    let pinned = savedWeekId ? state.catalogWeeks.find((w) => w.id === savedWeekId) : null;
+    // A "Change Week" pin was meant for a one-off peek, not a permanent
+    // opt-out of auto-advance — without this, tapping it once ever freezes
+    // that profile's own-grade week forever, since nothing else ever clears
+    // the saved id. Only expires a pin on the SAME grade the profile is
+    // actually enrolled in: a deliberate look at another grade's list is left
+    // alone, since there's no "current week" to compare it against.
+    if (pinned && state.profile.grade && pinned.grade === state.profile.grade) {
+      const auto = computeAutoWeek(state.catalogWeeks, state.profile.grade);
+      if (auto && auto.id !== pinned.id && auto.weekStartDate > pinned.weekStartDate) {
+        localStorage.removeItem(selectedWeekKey(state.profile.id));
+        pinned = null;
+      }
+    }
+    week = pinned;
     if (!week && state.profile.grade) week = computeAutoWeek(state.catalogWeeks, state.profile.grade);
     if (!week && state.catalogWeeks.length) week = state.catalogWeeks[0];
 
@@ -1652,11 +2303,20 @@
     let currentGrade = null;
     let currentStart = null;
     let weekNum = 0;
+    // C3: without this, pasting just one week (to fix or update it) always
+    // lands on whatever position it is within THIS paste — almost always
+    // week 1 — silently overwriting the wrong week instead of the one being
+    // edited. An explicit `WEEK N` line overrides the auto-incremented
+    // position for the block that follows it only; a normal multi-week paste
+    // with no WEEK markers at all keeps behaving exactly as before.
+    let explicitWeekNum = null;
     let block = [];
 
     function flushBlock() {
       if (block.length === 0) return;
       weekNum++;
+      const useWeekNum = explicitWeekNum != null ? explicitWeekNum : weekNum;
+      explicitWeekNum = null;
       // Length caps are pure hardening, not a UX limit — no real spelling
       // word or definition comes close to 200 characters. Bounds how much a
       // single hostile line in a shared catalog paste can bloat the shared
@@ -1672,14 +2332,14 @@
         .filter((w) => w.text);
       if (words.length && currentGrade) {
         const start = new Date(currentStart + "T00:00:00");
-        start.setDate(start.getDate() + (weekNum - 1) * 7);
+        start.setDate(start.getDate() + (useWeekNum - 1) * 7);
         const dateStr = dateToLocalStr(start);
         weeks.push({
-          id: `${slugify(currentGrade)}-w${weekNum}`,
+          id: `${slugify(currentGrade)}-w${useWeekNum}`,
           grade: currentGrade,
-          weekNumber: weekNum,
+          weekNumber: useWeekNum,
           weekStartDate: dateStr,
-          label: `Grade ${currentGrade} · Week ${weekNum}`,
+          label: `Grade ${currentGrade} · Week ${useWeekNum}`,
           words,
         });
       }
@@ -1694,6 +2354,13 @@
         currentGrade = gradeMatch[1];
         currentStart = gradeMatch[2] || todayLocalStr();
         weekNum = 0;
+        explicitWeekNum = null;
+        return;
+      }
+      const weekMatch = line.match(/^week\s+(\d+)\b/i);
+      if (weekMatch) {
+        flushBlock(); // in case words were already piling up with no blank line before this marker
+        explicitWeekNum = parseInt(weekMatch[1], 10);
         return;
       }
       if (!line) { flushBlock(); return; }
@@ -1709,6 +2376,103 @@
     return Array.from(map.values());
   }
 
+  /* ---------------------------------------------------------------------
+   * C3: PER-WEEK CATALOG MANAGEMENT — edit/delete one week instead of only
+   * ever re-pasting a whole grade's year. "Edit" reuses the exact same
+   * paste -> preview -> save flow (parseCatalogText's WEEK N support above
+   * is what makes that land on the right week instead of always week 1);
+   * this just pre-fills the box with a paste that round-trips correctly.
+   * ------------------------------------------------------------------- */
+
+  // Reconstructs the GRADE header's implied start date (week 1's date) from
+  // this week's own stored date and position — parseCatalogText always
+  // computes weekStartDate as seriesStart + (weekNumber-1)*7 days, so
+  // subtracting that same offset recovers exactly the date that regenerates
+  // this week's real weekStartDate when the paste is re-parsed.
+  function impliedSeriesStart(week) {
+    if (!week.weekStartDate) return todayLocalStr();
+    const wn = week.weekNumber || 1;
+    const d = new Date(week.weekStartDate + "T00:00:00");
+    d.setDate(d.getDate() - (wn - 1) * 7);
+    return dateToLocalStr(d);
+  }
+
+  function weekToPasteText(week) {
+    const lines = [`GRADE ${week.grade} (starts ${impliedSeriesStart(week)})`, "", `WEEK ${week.weekNumber || 1}`, ""];
+    (week.words || []).forEach((w) => lines.push(w.definition ? `${w.text}, ${w.definition}` : w.text));
+    return lines.join("\n");
+  }
+
+  function renderCatalogWeeksManager() {
+    const wrap = document.getElementById("catalog-weeks-list");
+    if (!wrap) return;
+    if (!state.catalogWeeks.length) { wrap.innerHTML = '<p class="hint">No weeks in this catalog yet.</p>'; return; }
+    const grades = Array.from(new Set(state.catalogWeeks.map((w) => w.grade))).sort();
+    wrap.innerHTML = grades.map((g) => {
+      const rows = state.catalogWeeks
+        .filter((w) => w.grade === g)
+        .sort((a, b) => a.weekNumber - b.weekNumber)
+        .map((w) => `
+          <div class="result-row">
+            <span>${escapeAttr(w.label)} <span style="font-weight:400;color:var(--muted);font-size:.85rem">(${w.words.length} words)</span></span>
+            <span class="catalog-week-actions">
+              <button class="icon-btn-sm" data-week-edit="${w.id}" title="Load into the box below to edit">✏️</button>
+              <button class="icon-btn-sm" data-week-delete="${w.id}" title="Delete this week">🗑️</button>
+            </span>
+          </div>`)
+        .join("");
+      return `<div class="week-picker-group-title">Grade ${escapeAttr(g)}</div>${rows}`;
+    }).join("");
+  }
+
+  document.getElementById("catalog-weeks-list").addEventListener("click", (e) => {
+    const editBtn = e.target.closest("[data-week-edit]");
+    if (editBtn) {
+      const week = state.catalogWeeks.find((w) => w.id === editBtn.getAttribute("data-week-edit"));
+      if (!week) return;
+      document.getElementById("catalog-paste-input").value = weekToPasteText(week);
+      document.getElementById("catalog-paste-input").scrollIntoView({ behavior: "smooth", block: "center" });
+      toast("Loaded below — edit the words, then Preview and Save to update just this week.");
+      return;
+    }
+    const delBtn = e.target.closest("[data-week-delete]");
+    if (delBtn) {
+      const week = state.catalogWeeks.find((w) => w.id === delBtn.getAttribute("data-week-delete"));
+      if (week) requestDeleteWeek(week);
+    }
+  });
+
+  // D1-style in-app confirm rather than a native confirm() — same reasoning
+  // as the Star Shop purchase confirm (see requestBuyItem): a native dialog
+  // inside an installed, standalone PWA reads as a browser error, not part
+  // of the app.
+  let pendingWeekDelete = null;
+  function requestDeleteWeek(week) {
+    pendingWeekDelete = week;
+    document.getElementById("catalog-week-delete-label").textContent = week.label;
+    document.getElementById("catalog-week-delete-confirm").classList.remove("hidden");
+  }
+  document.getElementById("btn-catalog-week-delete-cancel").addEventListener("click", () => {
+    pendingWeekDelete = null;
+    document.getElementById("catalog-week-delete-confirm").classList.add("hidden");
+  });
+  document.getElementById("btn-catalog-week-delete-yes").addEventListener("click", async () => {
+    const week = pendingWeekDelete;
+    pendingWeekDelete = null;
+    document.getElementById("catalog-week-delete-confirm").classList.add("hidden");
+    if (!week) return;
+    const code = getCatalogCode();
+    state.catalogWeeks = state.catalogWeeks.filter((w) => w.id !== week.id);
+    save(catalogWeeksKey(code), state.catalogWeeks);
+    renderCatalogWeeksManager();
+    toast(`Deleted ${week.label}`);
+    if (firestoreReady() && code !== LOCAL_CATALOG) {
+      try { await Sync.deleteCatalogWeek(code, week.id); }
+      catch (e) { toast("Deleted locally — sync didn't confirm it, so it may come back."); }
+    }
+    if (state.profile) await loadCatalogAndWeek();
+  });
+
   let catalogParsePreview = [];
 
   async function openCatalogEditor() {
@@ -1719,6 +2483,7 @@
     document.getElementById("btn-save-catalog").classList.add("hidden");
     document.getElementById("btn-copy-catalog-link").classList.toggle("hidden", code === LOCAL_CATALOG);
     showScreen("catalog-editor");
+    renderCatalogWeeksManager();
 
     // Ownership is a soft guardrail (same posture as household/catalog
     // codes themselves), not a hard permission — it just keeps someone from
@@ -1731,19 +2496,34 @@
     // catalogs with no owner recorded at all (e.g. the real zoelive catalog,
     // created before either existed), stay editable by everyone — failing
     // open keeps anything already live from being locked out.
+    //
+    // editorTokens (docs/school-scale-plan.md's shared-school-catalog model):
+    // a second, third, etc. class is never auto-granted edit access just by
+    // connecting — the whole point of a soft guardrail is that it keeps
+    // *accidental* overwrites, not deliberate collaboration, from happening
+    // without a person choosing it — but the readonly note now offers an
+    // explicit one-tap way to grant it, instead of dead-ending at "ask them."
     const note = document.getElementById("catalog-readonly-note");
     const form = document.getElementById("catalog-editor-form");
     note.classList.add("hidden");
+    note.innerHTML = "";
     form.classList.remove("hidden");
     if (code !== LOCAL_CATALOG && firestoreReady()) {
       try {
         const meta = await Sync.fetchCatalogMeta(code);
         const owner = meta && meta.ownerToken;
+        const editors = (meta && Array.isArray(meta.editorTokens)) ? meta.editorTokens : [];
         const mine = await Sync.ensureOwnerToken();
-        if (owner && mine && owner !== mine) {
-          note.textContent = "This catalog is managed by another household — you can use it, but only they can add or change words. Ask them to add new weeks, or connect a different catalog.";
+        const isEditor = !owner || !mine || owner === mine || editors.includes(mine);
+        if (!isEditor) {
+          note.innerHTML = 'This catalog is managed by another class — ask them to add new weeks, or <button id="btn-request-catalog-edit" class="link-btn">enable editing for this class too</button>.';
           note.classList.remove("hidden");
           form.classList.add("hidden");
+          document.getElementById("btn-request-catalog-edit").addEventListener("click", async () => {
+            const ok = await Sync.addCatalogEditor(code);
+            if (ok) { toast("Editing enabled — you can add your grade's weeks now"); openCatalogEditor(); }
+            else toast("Couldn't enable editing — check your internet and try again.");
+          });
         }
       } catch (e) { /* ignore — fail open to editable, matching the app's existing offline-friendly fallbacks */ }
     }
@@ -1798,6 +2578,7 @@
       document.getElementById("catalog-paste-input").value = "";
       document.getElementById("catalog-preview").classList.add("hidden");
       btn.classList.add("hidden");
+      renderCatalogWeeksManager();
       if (state.profile) await loadCatalogAndWeek();
     } catch (e) {
       toast("Couldn't save — check your internet and try again.");
@@ -1944,7 +2725,7 @@
   let retype = { active: false, prefix: "", target: "" };
 
   function beginRetype(prefix, wordText) {
-    retype = { active: true, prefix, target: wordText.trim().toLowerCase() };
+    retype = { active: true, prefix, target: normalizeSpelling(wordText) };
     const input = document.getElementById(prefix + "-input");
     const submit = document.getElementById(prefix + "-submit");
     input.value = "";
@@ -1964,7 +2745,7 @@
     const input = document.getElementById(prefix + "-input");
     const answer = input.value.trim();
     if (!answer) { input.focus(); return true; }
-    if (answer.toLowerCase() !== retype.target) {
+    if (normalizeSpelling(answer) !== retype.target) {
       // No message and no sound on a wrong retype — the correct spelling is
       // still displayed directly above the input, so anything written here
       // would only be repeating what they can already see, in a scolding tone.
@@ -2068,7 +2849,10 @@
       toast("Nothing to review yet — practice a week first!");
       return;
     }
-    reviewSession = { queue: shuffle(queue), index: 0, streak: 0, docs };
+    reviewSession = {
+      queue: shuffle(queue), index: 0, streak: 0, docs, missedAny: false,
+      starsThisSession: 0, medalUps: [], bestStreak: 0, wordSet: queue.map((q) => q.word),
+    };
     document.getElementById("review-streak").classList.add("hidden");
     recordModeStart("review");
     renderReview();
@@ -2108,15 +2892,20 @@
     if (handleRetypeSubmit()) return;
     const item = reviewSession.queue[reviewSession.index];
     const answer = document.getElementById("review-input").value.trim();
-    const correct = answer.toLowerCase() === item.word.text.trim().toLowerCase();
-    recordAnswer(item.word, correct, "spelling");
+    const correct = normalizeSpelling(answer) === normalizeSpelling(item.word.text);
+    const result = recordAnswer(item.word, correct, "spelling", { streakStep: reviewSession.streak + 1 });
+    trackSessionResult(reviewSession, item.word, result);
     const feedback = document.getElementById("review-feedback");
     if (correct) {
       reviewSession.streak++;
+      reviewSession.bestStreak = Math.max(reviewSession.bestStreak || 0, reviewSession.streak);
       feedback.className = "feedback correct";
       feedback.textContent = "✅ Correct! Nice work.";
+      appendMedalNudge(feedback, item.word);
+      handleHotStreak(reviewSession, true);
     } else {
-      reviewSession.streak = 0;
+      endStreak(reviewSession);
+      reviewSession.missedAny = true;
       feedback.className = "feedback incorrect";
       feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(item.word.text)}</span><span class="retype-prompt">Now type it once to lock it in 🔒</span>`;
     }
@@ -2141,10 +2930,26 @@
   document.getElementById("review-continue").addEventListener("click", () => {
     reviewSession.index++;
     if (reviewSession.index >= reviewSession.queue.length) {
-      toast("Review complete! 🧠");
+      // Smart Review previously got no completion reward at all — the most
+      // pedagogically useful mode (weakest words, drawn across every week
+      // ever practiced) was also the least celebrated. Same perfect-round
+      // shape as the other modes (no misses, real-sized list), just built by
+      // hand instead of through awardRoundCompletionBonus: reviewSession has
+      // no round/retry — it's a single flat pass, not a two-round shape.
+      if (!reviewSession.missedAny && reviewSession.queue.length >= 4) {
+        const paid = awardCappedBonus(5, getOrInitActivity());
+        toast(paid ? "🌟 Perfect round! +5 ⭐" : "🌟 Perfect round!");
+        celebrate("big");
+        playSound("perfect");
+        reactBuddy("cheer");
+      }
       flushActivity();
-      renderHome();
-      showScreen("home");
+      showSessionWrapUp(reviewSession, {
+        title: "Smart Review",
+        showStars: true,
+        wordSet: reviewSession.wordSet,
+        replay: () => openReview(),
+      });
     } else {
       renderReview();
     }
@@ -2226,8 +3031,11 @@
       document.getElementById("home-week-label").textContent = "No word list yet";
       document.getElementById("home-word-count").textContent = "Load a ready-made list to start practicing right now.";
       summary.classList.add("hidden");
+      document.getElementById("home-week-progress").classList.add("hidden");
+      document.getElementById("home-gold-ring").classList.add("hidden");
       document.getElementById("home-streak-banner").classList.add("hidden");
       document.getElementById("home-daily-goal").classList.add("hidden");
+      document.getElementById("home-recommend").classList.add("hidden");
       starterBtn.classList.remove("hidden");
       return;
     }
@@ -2248,8 +3056,35 @@
       summary.classList.add("hidden");
     }
 
+    // "Am I done with THIS WEEK" — the daily goal below answers the same
+    // question at a one-day scale; medals-only was otherwise the only
+    // week-scale signal, and a bare count isn't a target the way a bar is.
+    const progressWrap = document.getElementById("home-week-progress");
+    if (n > 0) {
+      const silverPlus = counts.gold + counts.silver;
+      const pct = Math.round((silverPlus / n) * 100);
+      document.getElementById("week-progress-fill").style.width = pct + "%";
+      document.getElementById("week-progress-label").textContent = `${silverPlus} of ${n} word${n === 1 ? "" : "s"} at Silver or better`;
+      progressWrap.classList.remove("hidden");
+    } else {
+      progressWrap.classList.add("hidden");
+    }
+
+    // Mechanic 6 ("Gold the List") — a trophy already banked for this exact
+    // week reads as a completed badge, not a live count creeping toward a
+    // goal that's already been hit.
+    const goldEl = document.getElementById("home-gold-ring");
+    if (n > 0) {
+      const trophyDate = (state.profile.weekTrophies || {})[state.progress.weekId];
+      goldEl.textContent = trophyDate ? `🏆 All Gold — earned ${relativeDateLabel(trophyDate)}!` : `🥇 ${counts.gold} of ${n} Gold`;
+      goldEl.classList.remove("hidden");
+    } else {
+      goldEl.classList.add("hidden");
+    }
+
     renderStreakBanner();
     renderDailyGoal();
+    renderHomeRecommendation();
   }
 
   // Smart Review works off past weeks, so it stays available (and shows how
@@ -2267,26 +3102,103 @@
     }
   }
 
+  // Factored out of the tile grid's own click handler so the Home "start
+  // here" recommendation (below) can send a kid into the same modes through
+  // the same gate, instead of duplicating the word-list-required check.
+  function navigateHomeTarget(target) {
+    const noWordListNeeded = target === "progress" || target === "shop" || target === "review";
+    if (!noWordListNeeded && (!state.progress || state.progress.words.length === 0)) {
+      toast("Add some words first — try a starter list!");
+      openStarterLists();
+      return;
+    }
+    if (target === "word-list") openWordList();
+    else if (target === "flashcard") openFlashcard();
+    else if (target === "spelling") openSpelling(false);
+    else if (target === "vocab") openVocabSetup();
+    else if (target === "test-setup") showScreen("test-setup");
+    else if (target === "speed-setup") showScreen("speed-setup");
+    else if (target === "scramble") openScramble();
+    else if (target === "review") openReview();
+    else if (target === "progress") openProgress();
+    else if (target === "shop") openShop();
+  }
+
   document.querySelectorAll(".menu-card[data-nav]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const target = btn.getAttribute("data-nav");
-      const noWordListNeeded = target === "progress" || target === "shop" || target === "review";
-      if (!noWordListNeeded && (!state.progress || state.progress.words.length === 0)) {
-        toast("Add some words first — try a starter list!");
-        openStarterLists();
-        return;
-      }
-      if (target === "flashcard") openFlashcard();
-      else if (target === "spelling") openSpelling(false);
-      else if (target === "vocab") openVocabSetup();
-      else if (target === "test-setup") showScreen("test-setup");
-      else if (target === "speed-setup") showScreen("speed-setup");
-      else if (target === "scramble") openScramble();
-      else if (target === "review") openReview();
-      else if (target === "progress") openProgress();
-      else if (target === "shop") openShop();
-    });
+    btn.addEventListener("click", () => navigateHomeTarget(btn.getAttribute("data-nav")));
   });
+
+  // B3: one steer above the free-choice grid, not a gate — rules run in
+  // priority order over data every mode already produces, so a kid who
+  // doesn't know where to start on a 9-tile grid has one obvious first tap.
+  let homeRecommendTarget = null;
+  function renderHomeRecommendation() {
+    const el = document.getElementById("home-recommend");
+    homeRecommendTarget = null;
+    if (!state.progress || !state.progress.words.length) { el.classList.add("hidden"); return; }
+    const words = state.progress.words;
+    const unpracticedCount = words.filter((w) => wordStatus(w) === "new").length;
+    let text = null;
+    if (unpracticedCount === words.length) {
+      text = "Brand-new list — see what's coming up in This Week's Words.";
+      homeRecommendTarget = "word-list";
+    } else if (unpracticedCount / words.length >= 0.6) {
+      text = "Most of this week's words are new — try Look & Say to hear them first.";
+      homeRecommendTarget = "flashcard";
+    } else if (words.filter((w) => { const m = wordMedal(w); return m === "none" || m === "bronze"; }).length / words.length >= 0.5) {
+      text = "Quite a few of these could use more practice — try Spelling Practice.";
+      homeRecommendTarget = "spelling";
+    } else if (reviewAvailableCount(state.profile.id) > 0) {
+      text = "You've got words waiting in Smart Review — a quick round would help.";
+      homeRecommendTarget = "review";
+    }
+    document.getElementById("home-recommend-text").textContent = text || "";
+    el.classList.toggle("hidden", !text);
+  }
+  document.getElementById("home-recommend").addEventListener("click", () => {
+    if (homeRecommendTarget) navigateHomeTarget(homeRecommendTarget);
+  });
+
+  /* ---------------------------------------------------------------------
+   * THIS WEEK'S WORDS — a clean reference sheet, not a progress view: every
+   * word in the current week's catalog order (the order the teacher/parent
+   * authored it in — the same order every study mode already trusts, not
+   * alphabetical), with its definition when there is one. No stats, no
+   * medals — a kid starting the week reaches for this, not Progress.
+   * ------------------------------------------------------------------- */
+  function openWordList() {
+    renderWordList();
+    showScreen("word-list");
+  }
+
+  function renderWordList() {
+    document.getElementById("word-list-week-label").textContent = state.selectedWeek ? state.selectedWeek.label : "";
+    const wrap = document.getElementById("word-list-rows");
+    wrap.innerHTML = "";
+    state.progress.words.forEach((w) => {
+      const row = document.createElement("div");
+      row.className = "word-list-row";
+      // Empty definitions render nothing here, deliberately — same rule
+      // wordsWithDefinition() documents for Look & Say, so a plain spelling
+      // word never shows a "(no definition)" placeholder next to a real one.
+      const def = w.definition && w.definition.trim()
+        ? `<p class="word-list-row-def">${escapeAttr(w.definition)}</p>`
+        : "";
+      row.innerHTML = `<div class="word-list-row-main"><span class="word-list-row-word">${escapeAttr(w.text)}</span><button class="word-list-row-speak" title="Hear it">🔊</button></div>${def}`;
+      row.querySelector(".word-list-row-speak").addEventListener("click", () => speak(w.text));
+      wrap.appendChild(row);
+    });
+  }
+
+  document.getElementById("word-list-hear-all").addEventListener("click", () => {
+    // speak() calls speechSynthesis.cancel() before every utterance, so
+    // calling it once per word in a loop would cut each word off as the next
+    // one starts — one combined utterance with natural pause points (commas)
+    // is simpler than teaching speak() to queue.
+    if (!state.progress) return;
+    speak(state.progress.words.map((w) => w.text).join(", "));
+  });
+  document.getElementById("word-list-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
 
   /* ---------------------------------------------------------------------
    * FLASHCARD (Look & Say) SESSION
@@ -2330,8 +3242,18 @@
    * ------------------------------------------------------------------- */
   let spell = { queue: [], retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
 
-  function openSpelling() {
-    spell = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
+  // words: optional subset (e.g. "practice the ones I missed" from a results
+  // screen) — falsy/empty falls back to the full current week, same as
+  // before. The Home tile's own call site passes the literal `false` it
+  // always has; that's harmless here since it's exactly what "no subset"
+  // looks like.
+  function openSpelling(words) {
+    const list = Array.isArray(words) && words.length ? words : state.progress.words;
+    spell = {
+      queue: shuffle(list), retry: [], index: 0, round: 1, streak: 0, missedThisRound: false,
+      starsThisSession: 0, medalUps: [], bestStreak: 0, wordSet: list,
+      bonusWordId: (pickBonusWord(list) || {}).id || null, bonusWordAwarded: false,
+    };
     document.getElementById("spell-streak").classList.add("hidden");
     recordModeStart("spelling");
     renderSpelling();
@@ -2362,15 +3284,21 @@
     if (handleRetypeSubmit()) return;
     const w = spell.queue[spell.index];
     const answer = document.getElementById("spell-input").value.trim();
-    const correct = answer.toLowerCase() === w.text.trim().toLowerCase();
-    recordAnswer(w, correct, "spelling");
+    const correct = normalizeSpelling(answer) === normalizeSpelling(w.text);
+    const canPay = !offGradeWeek();
+    const result = recordAnswer(w, correct, "spelling", { noStars: !canPay, streakStep: spell.streak + 1 });
+    trackSessionResult(spell, w, result);
     const feedback = document.getElementById("spell-feedback");
     if (correct) {
       spell.streak++;
+      spell.bestStreak = Math.max(spell.bestStreak || 0, spell.streak);
       feedback.className = "feedback correct";
       feedback.textContent = "✅ Correct! Nice work.";
+      appendMedalNudge(feedback, w);
+      handleHotStreak(spell, canPay);
+      checkBonusWord(spell, w, canPay);
     } else {
-      spell.streak = 0;
+      endStreak(spell);
       spell.missedThisRound = true;
       if (spell.round === 1) spell.retry.push(w);
       feedback.className = "feedback incorrect";
@@ -2406,10 +3334,17 @@
         toast("Let's try those tricky ones again!");
         renderSpelling();
       } else {
-        if (!awardRoundCompletionBonus(spell)) toast("Spelling practice complete! ⭐");
+        const canPay = !offGradeWeek();
+        awardRoundCompletionBonus(spell, canPay);
+        checkGoldTheList();
         flushActivity();
-        renderHome();
-        showScreen("home");
+        showSessionWrapUp(spell, {
+          title: "Spelling Practice",
+          showStars: canPay,
+          wordSet: spell.wordSet,
+          extraNudge: bonusWordMissedNudge(spell, spell.wordSet),
+          replay: () => openSpelling(spell.wordSet),
+        });
       }
     } else {
       renderSpelling();
@@ -2471,12 +3406,15 @@
    * ------------------------------------------------------------------- */
   let vocab = { queue: [], retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
 
-  function openVocab() {
-    const words = wordsWithDefinition(state.progress);
+  // subset: optional word list (e.g. missed vocab words from a results
+  // screen) — already-real word objects, so no need to re-filter through
+  // wordsWithDefinition() the way the normal full-week path does.
+  function openVocab(subset) {
+    const words = Array.isArray(subset) && subset.length ? subset : wordsWithDefinition(state.progress);
     // The picker already gates this, but a session with an empty queue would
     // crash renderVocab() on queue[0] — cheap guard, same shape as openReview().
     if (!words.length) { toast("No words with definitions in this week's list."); return; }
-    vocab = { queue: shuffle(words), retry: [], index: 0, round: 1, streak: 0, missedThisRound: false };
+    vocab = { queue: shuffle(words), retry: [], index: 0, round: 1, streak: 0, missedThisRound: false, starsThisSession: 0, medalUps: [], bestStreak: 0, wordSet: words };
     document.getElementById("vocab-streak").classList.add("hidden");
     recordModeStart("vocab");
     renderVocab();
@@ -2503,9 +3441,15 @@
 
   function gradeVocab(knewIt) {
     const w = vocab.queue[vocab.index];
-    recordAnswer(w, knewIt, "vocab");
-    if (knewIt) vocab.streak++;
-    else { vocab.streak = 0; vocab.missedThisRound = true; if (vocab.round === 1) vocab.retry.push(w); }
+    // Self-graded ("I Knew It" is the child's own report, never checked) — see
+    // recordAnswer's noStars doc comment. Still gets the streak pitch-rise
+    // (pure feedback, not currency) but never the hot-streak bonus burst or a
+    // Bonus Word reveal — see handleHotStreak/checkBonusWord's canPay guard.
+    const result = recordAnswer(w, knewIt, "vocab", { noStars: true, streakStep: vocab.streak + 1 });
+    trackSessionResult(vocab, w, result);
+    if (knewIt) { vocab.streak++; vocab.bestStreak = Math.max(vocab.bestStreak || 0, vocab.streak); }
+    else endStreak(vocab);
+    if (!knewIt) { vocab.missedThisRound = true; if (vocab.round === 1) vocab.retry.push(w); }
     updateStreakBadge(document.getElementById("vocab-streak"), vocab.streak);
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
 
@@ -2520,10 +3464,14 @@
         toast("Let's review those again!");
         renderVocab();
       } else {
-        if (!awardRoundCompletionBonus(vocab)) toast("Vocab practice complete! ⭐");
+        awardRoundCompletionBonus(vocab, false);
         flushActivity();
-        renderHome();
-        showScreen("home");
+        showSessionWrapUp(vocab, {
+          title: "Vocab Practice",
+          showStars: false,
+          wordSet: vocab.wordSet,
+          replay: () => openVocab(vocab.wordSet),
+        });
       }
     } else {
       renderVocab();
@@ -2567,10 +3515,37 @@
     return shuffle([target].concat(distractors));
   }
 
+  // Fewer than 6 defined words this week means buildVocabMatchChoices (which
+  // needs up to VOCAB_MATCH_CHOICES-1 = 3 distinct wrong definitions) draws
+  // from the same tiny pool every round — the 3 distractors repeat and a kid
+  // learns "the odd one out" instead of the actual meanings. Topped up from
+  // OTHER weeks of the same grade: still real definitions the child has (or
+  // will) study, just not this week's, so they read as plausible wrong
+  // answers rather than obviously-unrelated filler.
+  function extraDistractorPool(currentWeek) {
+    if (!currentWeek || !Array.isArray(state.catalogWeeks)) return [];
+    const extra = [];
+    state.catalogWeeks
+      .filter((wk) => wk.grade === currentWeek.grade && wk.id !== currentWeek.id)
+      .forEach((wk) => (wk.words || []).forEach((w) => { if (w.definition && w.definition.trim()) extra.push(w); }));
+    return extra;
+  }
+
   function openVocabMatch() {
     const words = wordsWithDefinition(state.progress);
     if (words.length < VOCAB_MATCH_MIN_WORDS) { toast("Needs at least 3 words with definitions."); return; }
-    vmatch = { queue: shuffle(words), pool: words, retry: [], index: 0, round: 1, streak: 0, missedThisRound: false, choices: [], locked: false };
+    let pool = words;
+    if (words.length < 6) {
+      const extra = extraDistractorPool(state.selectedWeek);
+      if (extra.length) pool = words.concat(extra);
+    }
+    // queue stays THIS week's words only — pool (the distractor source) is
+    // the only thing ever widened.
+    vmatch = {
+      queue: shuffle(words), pool, retry: [], index: 0, round: 1, streak: 0, missedThisRound: false, choices: [], locked: false,
+      starsThisSession: 0, medalUps: [], bestStreak: 0, wordSet: words,
+      bonusWordId: (pickBonusWord(words) || {}).id || null, bonusWordAwarded: false,
+    };
     document.getElementById("vmatch-streak").classList.add("hidden");
     recordModeStart("vocabmatch");
     renderVocabMatch();
@@ -2605,7 +3580,9 @@
     const w = vmatch.queue[vmatch.index];
     const target = w.definition.trim();
     const correct = chosen === target;
-    recordAnswer(w, correct, "vocab");
+    const canPay = !offGradeWeek();
+    const result = recordAnswer(w, correct, "vocab", { noStars: !canPay, streakStep: vmatch.streak + 1 });
+    trackSessionResult(vmatch, w, result);
     Array.from(document.getElementById("vmatch-choices").children).forEach((btn) => {
       btn.disabled = true;
       if (btn.textContent === target) btn.classList.add("correct");
@@ -2614,10 +3591,14 @@
     const feedback = document.getElementById("vmatch-feedback");
     if (correct) {
       vmatch.streak++;
+      vmatch.bestStreak = Math.max(vmatch.bestStreak || 0, vmatch.streak);
       feedback.className = "feedback correct";
       feedback.textContent = "✅ Correct! Nice work.";
+      appendMedalNudge(feedback, w);
+      handleHotStreak(vmatch, canPay);
+      checkBonusWord(vmatch, w, canPay);
     } else {
-      vmatch.streak = 0;
+      endStreak(vmatch);
       vmatch.missedThisRound = true;
       if (vmatch.round === 1) vmatch.retry.push(w);
       feedback.className = "feedback incorrect";
@@ -2641,10 +3622,17 @@
         toast("Let's review those again!");
         renderVocabMatch();
       } else {
-        if (!awardRoundCompletionBonus(vmatch)) toast("Match the Meaning complete! ⭐");
+        const canPay = !offGradeWeek();
+        awardRoundCompletionBonus(vmatch, canPay);
+        checkGoldTheList();
         flushActivity();
-        renderHome();
-        showScreen("home");
+        showSessionWrapUp(vmatch, {
+          title: "Match the Meaning",
+          showStars: canPay,
+          wordSet: vmatch.wordSet,
+          extraNudge: bonusWordMissedNudge(vmatch, vmatch.wordSet),
+          replay: () => openVocabMatch(),
+        });
       }
     } else {
       renderVocabMatch();
@@ -2713,7 +3701,10 @@
 
   function nextTestWord(record) {
     const w = test.queue[test.index];
-    recordAnswer(w, record.correct, record.kind, { silent: true });
+    // Vocab Test is self-graded (an honest self-rating, never checked) —
+    // Spelling Test is a real typed answer. Same off-grade gate as every
+    // other mode either way.
+    recordAnswer(w, record.correct, record.kind, { silent: true, noStars: record.kind === "vocab" || offGradeWeek() });
     test.results.push(record);
     saveProgress(state.profile.id, state.progress.weekId, state.progress);
 
@@ -2728,7 +3719,7 @@
   document.getElementById("test-submit").addEventListener("click", () => {
     const w = test.queue[test.index];
     const answer = document.getElementById("test-input").value.trim();
-    const correct = answer.toLowerCase() === w.text.trim().toLowerCase();
+    const correct = normalizeSpelling(answer) === normalizeSpelling(w.text);
     nextTestWord({ kind: "spelling", word: w.text, given: answer, correct });
   });
   document.getElementById("test-input").addEventListener("keydown", (e) => {
@@ -2749,31 +3740,77 @@
     showScreen("home");
   });
 
+  // Mechanic 7 ("Beat Your Best") — mode ("test" vs "speed") keeps a
+  // swipe-graded Speed Quiz score from ever being compared against a real
+  // typed/checked Test Mode one; different rigor, not interchangeable
+  // numbers. Cap raised from 5 to 10 (was tuned for the parent dashboard's
+  // history list alone) so a week of practice can't evict the actual best
+  // score right before a kid gets to see it beaten.
+  const RECENT_TESTS_MAX = 10;
+  function recordTestResult(kind, mode, pct) {
+    if (!state.profile || !state.progress) return;
+    state.profile.recentTests = [
+      { date: todayLocalStr(), kind, mode, pct, weekId: state.progress.weekId },
+      ...(state.profile.recentTests || []),
+    ].slice(0, RECENT_TESTS_MAX);
+    persistProfile();
+  }
+  // The best PRIOR score for this exact week+kind+mode — call BEFORE
+  // recordTestResult so the just-finished run doesn't count as its own
+  // "prior" best. null (not 0) means "nothing to compare," so a first-ever
+  // run shows no Best line rather than a misleading "Best: 0%".
+  function bestPriorScore(weekId, kind, mode) {
+    const entries = (state.profile && state.profile.recentTests) || [];
+    const matches = entries.filter((t) => t.weekId === weekId && t.kind === kind && t.mode === mode);
+    return matches.length ? Math.max(...matches.map((t) => t.pct)) : null;
+  }
+
   function showTestResults() {
+    let bestPrior = null;
     if (state.profile && state.progress) {
       const total = test.results.length;
       const right = test.results.filter((r) => r.correct).length;
       const pct = total ? Math.round((right / total) * 100) : 0;
-      state.profile.recentTests = [
-        { date: todayLocalStr(), kind: test.kind, pct, weekId: state.progress.weekId },
-        ...(state.profile.recentTests || []),
-      ].slice(0, 5);
-      persistProfile();
+      bestPrior = bestPriorScore(state.progress.weekId, test.kind, "test");
+      recordTestResult(test.kind, "test", pct);
     }
     renderResultsScreen({
       title: "Test Results",
       kindLabel: (test.kind === "spelling" ? "Spelling" : "Vocab") + " Test",
       results: test.results,
+      allowBonus: test.kind === "spelling" && !offGradeWeek(),
+      bestPrior,
     });
   }
 
-  function renderResultsScreen({ title, kindLabel, results }) {
+  // allowBonus: false whenever every result on this screen was self-graded
+  // (Speed Quiz, always; Vocab Test, always) or off-grade — otherwise a
+  // "perfect round" here is just a kid tapping the same self-report button
+  // repeatedly, not a verified perfect score. See recordAnswer's noStars.
+  let resultsMissedPractice = { words: [], isVocab: false };
+
+  function renderResultsScreen({ title, kindLabel, results, allowBonus, bestPrior }) {
     const total = results.length;
     const right = results.filter((r) => r.correct).length;
     const pct = total ? Math.round((right / total) * 100) : 0;
     document.getElementById("test-results-title").textContent = title;
     document.getElementById("test-score-circle").textContent = pct + "%";
     document.getElementById("test-score-text").textContent = `${right} of ${total} correct — ${kindLabel}`;
+
+    // Mechanic 7: on a lower or tied score, show ONLY the existing best —
+    // never the current (worse) number and never a down-arrow/delta. A
+    // missing bestPrior (no comparable history yet, e.g. Speed Quiz's first
+    // run on this week) hides the line entirely rather than claiming "Best: 0%".
+    const bestEl = document.getElementById("test-results-best");
+    if (bestPrior === null || bestPrior === undefined) {
+      bestEl.classList.add("hidden");
+    } else if (pct > bestPrior) {
+      bestEl.textContent = `🎉 New best! ${bestPrior}% → ${pct}%`;
+      bestEl.classList.remove("hidden");
+    } else {
+      bestEl.textContent = `Best: ${Math.max(bestPrior, pct)}%`;
+      bestEl.classList.remove("hidden");
+    }
 
     const list = document.getElementById("test-results-list");
     list.innerHTML = "";
@@ -2786,10 +3823,27 @@
       list.appendChild(row);
     });
 
-    const perfectRoundBonus = total >= 4 && right === total;
+    // "Practice the ones I missed" — results only ever holds a word's TEXT
+    // (`{word: w.text, ...}`), not the live word object, so map back into
+    // state.progress.words (every queue here — Test Mode, Speed Quiz — is
+    // sourced from it) to hand the practice modes real, current word data.
+    // Vocab misses route to Flip & Rate and need a real definition to
+    // practice against; a word with none just drops out of the subset rather
+    // than blocking the whole button.
+    const missedBtn = document.getElementById("test-results-practice-missed");
+    const isVocabResults = results.length > 0 && results[0].kind === "vocab";
+    let missedWords = results
+      .filter((r) => !r.correct)
+      .map((r) => state.progress.words.find((w) => w.text === r.word))
+      .filter(Boolean);
+    if (isVocabResults) missedWords = missedWords.filter((w) => w.definition && w.definition.trim());
+    resultsMissedPractice = { words: missedWords, isVocab: isVocabResults };
+    missedBtn.classList.toggle("hidden", missedWords.length === 0);
+
+    const perfectRoundBonus = allowBonus && total >= 4 && right === total;
     if (perfectRoundBonus) {
-      addStars(5);
-      toast("🌟 Perfect round! +5 ⭐");
+      const paid = awardCappedBonus(5, getOrInitActivity());
+      toast(paid ? "🌟 Perfect round! +5 ⭐" : "🌟 Perfect round!");
     } else if (pct === 100) toast("Perfect score! Amazing! 🌟");
     else if (pct >= 80) toast("Great job! Almost ready! ⭐");
     else toast("Good practice — a few more rounds will help.");
@@ -2803,6 +3857,11 @@
     if (pct >= 90) reactBuddy("cheer");
   }
   document.getElementById("test-results-done").addEventListener("click", () => { renderHome(); showScreen("home"); });
+  document.getElementById("test-results-practice-missed").addEventListener("click", () => {
+    const { words, isVocab } = resultsMissedPractice;
+    if (!words.length) return;
+    if (isVocab) openVocab(words); else openSpelling(words);
+  });
 
   /* ---------------------------------------------------------------------
    * SPEED QUIZ (parent-led, swipe right = got it / swipe left = missed it)
@@ -2847,7 +3906,9 @@
 
   function commitSpeedAnswer(correct) {
     const w = speed.queue[speed.index];
-    recordAnswer(w, correct, speed.kind);
+    // Always self/adult-graded — a swipe, never a typed or checked answer —
+    // for both kinds, so this is always noStars regardless of grade.
+    recordAnswer(w, correct, speed.kind, { noStars: true });
     if (correct) speed.streak++; else speed.streak = 0;
     updateStreakBadge(document.getElementById("speed-streak"), speed.streak);
     speed.results.push({ kind: speed.kind, word: w.text, correct });
@@ -2855,10 +3916,17 @@
 
     speed.index++;
     if (speed.index >= speed.queue.length) {
+      const total = speed.results.length;
+      const right = speed.results.filter((r) => r.correct).length;
+      const pct = total ? Math.round((right / total) * 100) : 0;
+      const bestPrior = state.progress ? bestPriorScore(state.progress.weekId, speed.kind, "speed") : null;
+      recordTestResult(speed.kind, "speed", pct);
       renderResultsScreen({
         title: "Speed Quiz Results",
         kindLabel: (speed.kind === "spelling" ? "Spelling" : "Vocab") + " Speed Quiz",
         results: speed.results,
+        allowBonus: false,
+        bestPrior,
       });
     } else {
       renderSpeedCard();
@@ -2928,8 +3996,27 @@
    * ------------------------------------------------------------------- */
   let scramble = { queue: [], retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false, missedThisRound: false };
 
-  function openScramble() {
-    scramble = { queue: shuffle(state.progress.words), retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false, missedThisRound: false };
+  // Multi-word or digit-bearing entries ("1 and 2 Samuel", "1 and 2 Kings") are
+  // real shipped curriculum content, but shuffleLetters() below splits on
+  // every character including spaces — producing a blank clickable tile with
+  // nothing sensible to place there. Excluded from Scramble entirely rather
+  // than given a smarter tile layout; every other mode still uses them fine.
+  function scrambleSafeWords(words) {
+    return words.filter((w) => !/[\d ]/.test(w.text));
+  }
+
+  function openScramble(subset) {
+    const source = Array.isArray(subset) && subset.length ? subset : state.progress.words;
+    const words = scrambleSafeWords(source);
+    // The setup screens for Test/Speed already guard "no words at all"; this
+    // is the one mode that can lose every word in a list to the filter above
+    // (a week that's entirely Bible-book names, say) and needs its own check.
+    if (!words.length) { toast("This week's words don't work with Word Scramble — try Spelling Practice instead."); return; }
+    scramble = {
+      queue: shuffle(words), retry: [], index: 0, round: 1, streak: 0, bank: [], answer: [], locked: false, missedThisRound: false,
+      starsThisSession: 0, medalUps: [], bestStreak: 0, wordSet: words,
+      bonusWordId: (pickBonusWord(words) || {}).id || null, bonusWordAwarded: false,
+    };
     document.getElementById("scramble-streak").classList.add("hidden");
     recordModeStart("scramble");
     renderScrambleWord();
@@ -3049,14 +4136,20 @@
     const w = scramble.queue[scramble.index];
     const assembled = scramble.answer.map((tileId) => scramble.bank.find((t) => t.id === tileId).char).join("");
     const correct = assembled.toLowerCase() === w.text.trim().toLowerCase();
-    recordAnswer(w, correct, "spelling");
+    const canPay = !offGradeWeek();
+    const result = recordAnswer(w, correct, "spelling", { noStars: !canPay, streakStep: scramble.streak + 1 });
+    trackSessionResult(scramble, w, result);
     const feedback = document.getElementById("scramble-feedback");
     if (correct) {
       scramble.streak++;
+      scramble.bestStreak = Math.max(scramble.bestStreak || 0, scramble.streak);
       feedback.className = "feedback correct";
       feedback.textContent = "✅ Correct! Nice work.";
+      appendMedalNudge(feedback, w);
+      handleHotStreak(scramble, canPay);
+      checkBonusWord(scramble, w, canPay);
     } else {
-      scramble.streak = 0;
+      endStreak(scramble);
       scramble.missedThisRound = true;
       if (scramble.round === 1) scramble.retry.push(w);
       feedback.className = "feedback incorrect";
@@ -3085,10 +4178,17 @@
         toast("Let's try those tricky ones again!");
         renderScrambleWord();
       } else {
-        if (!awardRoundCompletionBonus(scramble)) toast("Word Scramble complete! ⭐");
+        const canPay = !offGradeWeek();
+        awardRoundCompletionBonus(scramble, canPay);
+        checkGoldTheList();
         flushActivity();
-        renderHome();
-        showScreen("home");
+        showSessionWrapUp(scramble, {
+          title: "Word Scramble",
+          showStars: canPay,
+          wordSet: scramble.wordSet,
+          extraNudge: bonusWordMissedNudge(scramble, scramble.wordSet),
+          replay: () => openScramble(scramble.wordSet),
+        });
       }
     } else {
       renderScrambleWord();
@@ -3117,9 +4217,10 @@
       state.progress.words.forEach((w) => {
         const meta = statusMeta(wordStatus(w));
         const icon = MEDAL_ICON[wordMedal(w)];
+        const nudge = medalProgressText(w);
         const row = document.createElement("div");
         row.className = "result-row " + meta.cls;
-        row.innerHTML = `<span>${icon} ${escapeAttr(w.text)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${meta.label}</span>`;
+        row.innerHTML = `<span>${icon} ${escapeAttr(w.text)}${nudge ? `<span class="progress-medal-nudge">${escapeAttr(nudge)}</span>` : ""}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${meta.label}</span>`;
         cur.appendChild(row);
       });
     } else {
@@ -3252,6 +4353,60 @@
     });
   }
 
+  // B5: the shop only ever shows a character at 92-108px, and unlockDates
+  // (recorded on every purchase since 2026-08-28) has had nowhere to surface
+  // at all — this is that home, plus the lifetime stats that were similarly
+  // recorded but never shown anywhere on their own. Device-local, same
+  // tradeoff as Smart Review's pool (loadAllProgressDocs): a fuller picture
+  // on the device that's actually been used to practice, not a promise of
+  // cross-device completeness.
+  function openTrophyShelf() {
+    const p = state.profile;
+    const statsWrap = document.getElementById("trophy-stats");
+    const medals = { gold: 0, silver: 0, bronze: 0 };
+    loadAllProgressDocs(p.id).forEach((doc) => {
+      (doc.words || []).forEach((w) => { const m = wordMedal(w); if (medals[m] !== undefined) medals[m]++; });
+    });
+    statsWrap.innerHTML = [
+      { value: p.lifetimeStars || 0, label: "Lifetime Stars" },
+      { value: p.bestStreak || 0, label: "Best Streak" },
+      { value: medals.gold, label: "Gold Words" },
+    ].map((s) => `<div class="trophy-stat"><div class="trophy-stat-value">${s.value}</div><div class="trophy-stat-label">${s.label}</div></div>`).join("");
+
+    // Mechanic 6's collection view: each weekTrophies entry is a permanent
+    // record of a fully-Gold week. weekId is looked up against whatever
+    // catalog weeks are currently loaded for a readable label, falling back
+    // to the raw id (a week from a catalog the family/class has since moved
+    // off of) rather than hiding an earned trophy.
+    const trophies = Object.entries(p.weekTrophies || {}).sort((a, b) => b[1].localeCompare(a[1]));
+    const goldWeeksTitle = document.getElementById("trophy-gold-weeks-title");
+    const goldWeeksWrap = document.getElementById("trophy-gold-weeks");
+    goldWeeksTitle.classList.toggle("hidden", !trophies.length);
+    goldWeeksWrap.innerHTML = trophies.map(([weekId, date]) => {
+      const wk = (state.catalogWeeks || []).find((w) => w.id === weekId);
+      return `<div class="result-row"><span>🏆 ${escapeAttr(wk ? wk.label : weekId)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${relativeDateLabel(date)}</span></div>`;
+    }).join("");
+
+    const grid = document.getElementById("trophy-characters");
+    const earned = ShopCatalog.CHARACTERS
+      .filter((item) => isUnlocked(p, "char:" + item.id))
+      .map((item) => ({ item, date: (p.unlockDates || {})["char:" + item.id] || "" }))
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    if (!earned.length) {
+      grid.innerHTML = '<p class="trophy-empty">No characters earned yet — the Star Shop is full of them!</p>';
+    } else {
+      grid.innerHTML = earned.map(({ item, date }) => `
+        <div class="trophy-card${item.tier === "chase" ? " legendary" : ""}">
+          <span class="trophy-card-img"><img src="assets/avatars/${item.id}.webp" alt="${escapeAttr(item.label)}"></span>
+          <span class="trophy-card-label">${escapeAttr(item.label)}</span>
+          <span class="trophy-card-date">${date ? "earned " + relativeDateLabel(date) : ""}</span>
+        </div>`).join("");
+    }
+    showScreen("trophy-shelf");
+  }
+  document.getElementById("btn-open-trophy-shelf").addEventListener("click", openTrophyShelf);
+  document.getElementById("trophy-shelf-exit").addEventListener("click", () => showScreen("shop"));
+
   // Renders one item card in one of four states: equipped (disabled, ring),
   // owned-not-equipped (click to equip), affordable (click to buy), or
   // locked/too-expensive (dimmed, disabled — spec's "too expensive" state
@@ -3292,7 +4447,7 @@
       equipped: avatarFor(p) === avatarValue(item),
       price: item.price,
       onEquip: () => equipAvatar(item),
-      onBuy: () => buyItem("char", item),
+      onBuy: () => requestBuyItem("char", item),
     });
   }
 
@@ -3324,7 +4479,7 @@
         equipped: avatarFor(p) === avatarValue(item),
         price: item.price,
         onEquip: () => equipAvatar(item),
-        onBuy: () => buyItem("avatar", item),
+        onBuy: () => requestBuyItem("avatar", item),
       });
     });
 
@@ -3346,7 +4501,7 @@
         equipped,
         price: item.price,
         onEquip: () => equipTheme(item),
-        onBuy: () => buyItem("theme", item),
+        onBuy: () => requestBuyItem("theme", item),
       });
     });
   }
@@ -3386,9 +4541,41 @@
     renderShop();
   }
 
+  // D1: a native confirm() inside an installed, standalone PWA looks like a
+  // browser chrome error, not part of the app — pendingBuy holds what
+  // requestBuyItem below is asking the child to confirm, and buyItem is now
+  // only ever called after that in-app "Yes, buy it" tap.
+  let pendingBuy = null;
+
+  function requestBuyItem(kind, item) {
+    const p = state.profile;
+    const unlockId = kind + ":" + item.id;
+    if (isUnlocked(p, unlockId)) return;
+    const price = sanitizePrice(item.price, 0);
+    if ((p.stars || 0) < price) return;
+    const label = kind === "avatar" ? item.emoji : item.label;
+    pendingBuy = { kind, item };
+    document.getElementById("shop-buy-confirm-label").textContent = label;
+    document.getElementById("shop-buy-confirm-price").textContent = price;
+    document.getElementById("shop-buy-confirm").classList.remove("hidden");
+  }
+  document.getElementById("btn-shop-buy-confirm-cancel").addEventListener("click", () => {
+    pendingBuy = null;
+    document.getElementById("shop-buy-confirm").classList.add("hidden");
+  });
+  document.getElementById("btn-shop-buy-confirm-yes").addEventListener("click", () => {
+    const pending = pendingBuy;
+    pendingBuy = null;
+    document.getElementById("shop-buy-confirm").classList.add("hidden");
+    if (pending) buyItem(pending.kind, pending.item);
+  });
+
   // Two devices spending the same balance simultaneously can double-spend —
   // accepted tradeoff at family scale, resolved last-write-wins via the
   // existing profile sync. Not building conflict-resolution machinery for it.
+  // Called only from the "Yes, buy it" handler above — requestBuyItem() owns
+  // every guard (already owned, can't afford) up front, and re-checks them
+  // here too in case shop state changed while the confirm box was open.
   function buyItem(kind, item) {
     const p = state.profile;
     const unlockId = kind + ":" + item.id;
@@ -3398,7 +4585,6 @@
     const price = sanitizePrice(item.price, 0);
     if ((p.stars || 0) < price) return;
     const label = kind === "avatar" ? item.emoji : item.label;
-    if (!confirm(`Buy ${label} for ${price} ⭐?`)) return;
     p.stars -= price;
     p.unlocks = p.unlocks || [];
     p.unlocks.push(unlockId);

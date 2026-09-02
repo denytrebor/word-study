@@ -120,9 +120,16 @@ service cloud.firestore {
       // any signed-in client that knows the catalog code can read and write
       // here. The client treats everything read from this subtree as untrusted
       // input (sanitizeWeek in app.js) precisely because of that.
+      //
+      // delete changed from false to signedIn() for the catalog editor's
+      // per-week delete (2026-09-01, see docs/HANDOFF.md) — a teacher
+      // removing a wrong or unwanted week. Same trust posture as create/
+      // update on this same subtree: anyone with the catalog code already has
+      // full read/write here, so allowing delete too closes no new gap, it
+      // just lets the client do something it already effectively could (an
+      // update that overwrites a week's words down to nothing).
       match /weeks/{weekId} {
-        allow get, list, create, update: if signedIn();
-        allow delete: if false;
+        allow get, list, create, update, delete: if signedIn();
       }
     }
   }

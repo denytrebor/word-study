@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Word Study</title>
 <meta name="theme-color" content="#4338ca">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -21,9 +21,10 @@
     <button id="btn-home" class="icon-btn" title="Home">🏠</button>
     <div class="header-info">
       <span id="header-profile-name"><span id="header-avatar"></span><span id="header-name-text">—</span></span>
-      <span id="header-stars">⭐ 0</span>
+      <span id="header-stars">⭐ <span id="header-stars-count">0</span></span>
     </div>
     <div class="header-right">
+      <span id="sync-status-dot" class="sync-status-dot hidden" title="Synced"></span>
       <button id="btn-mute-toggle" class="icon-btn" title="Mute sounds">🔊</button>
       <button id="btn-switch-profile" class="icon-btn" title="Switch profile">🔀</button>
     </div>
@@ -34,7 +35,7 @@
     <!-- SCREEN: Household connect (first run only) -->
     <section id="screen-household" class="screen active">
       <h1 class="app-title">📚 Word Study</h1>
-      <p class="subtitle">Connect this device to your family's shared list</p>
+      <p class="subtitle">Connect this device to your family's or class's shared list</p>
       <button id="btn-create-household" class="btn btn-primary">Create a New Household</button>
       <p class="hint" style="text-align:center;margin:18px 0 8px;">— or, if another device already made one —</p>
       <p class="hint" id="household-code-hint" style="text-align:center;margin:0 0 8px;display:none;">Your code is filled in below — tap Join once to connect this device (and let your browser offer to remember it, so a wiped device can recover on its own).</p>
@@ -82,9 +83,9 @@
       </div>
       <button id="btn-add-class-roster" class="btn btn-ghost add-parent-link">👥 Add a Class Roster</button>
 
-      <button id="btn-show-add-parent" class="btn btn-ghost add-parent-link">👨‍👧 Add a parent</button>
+      <button id="btn-show-add-parent" class="btn btn-ghost add-parent-link">👨‍👧 Add a parent or teacher</button>
       <div id="add-parent-form" class="new-profile-form hidden">
-        <input type="text" id="new-parent-name" placeholder="Parent's name" spellcheck="false" autocomplete="off" autocorrect="off">
+        <input type="text" id="new-parent-name" placeholder="Parent or teacher's name" spellcheck="false" autocomplete="off" autocorrect="off">
         <input type="text" id="new-parent-pin" class="grade-field" inputmode="numeric" maxlength="4" placeholder="PIN" autocomplete="off">
         <button id="btn-add-parent" class="btn btn-secondary">Create</button>
       </div>
@@ -107,7 +108,7 @@
         <p class="legal-updated">Last updated: 2026-08-26</p>
 
         <h3>What this is</h3>
-        <p>Word Study is a study tool built for one family's own kids to practice spelling and vocabulary words. It isn't a commercial product, there's no company behind it, and it isn't intended for the general public to sign up for — a parent sets it up for their own household.</p>
+        <p>Word Study is a study tool built for a family's own kids — or a teacher's own class — to practice spelling and vocabulary words. It isn't a commercial product, there's no company behind it, and it isn't intended for the general public to sign up for — a parent or teacher sets it up for their own household or class.</p>
 
         <h3>Privacy Policy</h3>
         <h4>What information is collected</h4>
@@ -115,11 +116,11 @@
         <h4>Where it's stored</h4>
         <p>Everything works fully offline, stored only in the browser's local storage on that device. If a household chooses to turn on "Sync across devices," the same information is also stored in Google Firebase (Firestore), so it can be reached from more than one device. Access to that stored data is controlled entirely by a short code your household chooses to share — anyone given that code can see and change that household's data, the same way anyone given a shared document link could. Word lists can additionally be shared across households on purpose, using a separate "catalog code," specifically so households can share the same list with each other.</p>
         <h4>Children's privacy</h4>
-        <p>This app is meant to be set up and supervised by a parent or guardian for their own children, not signed up for directly by a child. No advertising, behavioral tracking, or analytics services are used, and nothing collected here is ever sold or shared with third parties. The only outside service involved is Google Firebase, used strictly as private storage for the household that chooses to enable sync — never for advertising or analytics purposes.</p>
+        <p>This app is meant to be set up and supervised by a parent, guardian, or teacher for their own children or class, not signed up for directly by a child. No advertising, behavioral tracking, or analytics services are used, and nothing collected here is ever sold or shared with third parties. The only outside service involved is Google Firebase, used strictly as private storage for the household or class that chooses to enable sync — never for advertising or analytics purposes.</p>
         <h4>Deleting your data</h4>
         <p>Clearing your browser's site data for this app removes everything stored locally on that device. If cross-device sync was turned on, a copy also lives in Firebase; there is currently no self-service "delete my household" button in the app itself, so reach out using the contact info below to request that a household's stored data be deleted.</p>
         <h4>Being honest about the security model</h4>
-        <p>Access here is by shared code, not username-and-password accounts. That's a deliberate tradeoff to keep the app simple for a family to use, not an oversight — but it does mean anyone who has your household's code has full access to what's stored under it, the same as anyone holding a spare house key. Don't share your household code outside your own family.</p>
+        <p>Access here is by shared code, not username-and-password accounts. That's a deliberate tradeoff to keep the app simple for a family to use, not an oversight — but it does mean anyone who has your household's code has full access to what's stored under it, the same as anyone holding a spare house key. Don't share your household code outside your own family or class.</p>
 
         <h3>Terms of Use</h3>
         <p>This app is provided as-is, for personal family use, with no warranty of any kind — including no guarantee that it will always be available, that stored data will never be lost, or that it is free of bugs. It runs in part on a free tier of Google Firebase, which has its own usage limits; if those are ever exceeded the sync feature may stop working until the next day, though the app continues to work offline either way.</p>
@@ -158,7 +159,7 @@
     <!-- SCREEN: Parent Dashboard (read-only) -->
     <section id="screen-parent-dashboard" class="screen">
       <div class="parent-dash-header">
-        <h2 id="parent-dash-title">Parent Dashboard</h2>
+        <h2 id="parent-dash-title">Parent / Teacher Dashboard</h2>
         <div class="parent-dash-actions">
           <button id="parent-dash-refresh" class="btn btn-ghost">🔄 Refresh</button>
           <button id="parent-dash-manage-avatars" class="btn btn-ghost">🎛️ Manage Avatars</button>
@@ -169,7 +170,7 @@
       <div id="parent-dash-cards"></div>
 
       <div class="parent-self-manage">
-        <p class="psc-section-title">Your parent profile</p>
+        <p class="psc-section-title">Your profile</p>
         <div class="new-profile-form">
           <input type="text" id="parent-self-name" placeholder="Your name" spellcheck="false" autocomplete="off" autocorrect="off">
           <button id="btn-parent-self-rename" class="btn btn-secondary">Save Name</button>
@@ -210,7 +211,7 @@
     <!-- SCREEN: Catalog editor (bulk import a whole year) -->
     <section id="screen-catalog-editor" class="screen">
       <h2>📚 Manage Word Catalog</h2>
-      <p class="hint">One shared catalog can hold every grade in a whole school side by side. Paste a whole year at once — start each grade with a line like <code>GRADE 7 (starts 2026-09-01)</code>, then list words for each week — separate weeks with a blank line. Add a comma and a definition for vocab practice. Paste as many <code>GRADE</code> blocks as you need in one go, one per grade.</p>
+      <p class="hint">One shared catalog can hold every grade in a whole school side by side. Paste a whole year at once — start each grade with a line like <code>GRADE 7 (starts 2026-09-01)</code>, then list words for each week — separate weeks with a blank line. Add a comma and a definition for vocab practice. Paste as many <code>GRADE</code> blocks as you need in one go, one per grade. Fixing just one week later? Add a <code>WEEK 4</code> line right before it so it updates that week instead of week 1 — "✏️ Edit" below fills this box in correctly.</p>
       <button id="btn-starter-lists-from-catalog" class="btn btn-secondary">⚡ Or load a ready-made starter list</button>
       <p class="hint catalog-readonly-note hidden" id="catalog-readonly-note"></p>
       <div id="catalog-editor-form">
@@ -218,6 +219,16 @@
         <button id="btn-preview-catalog" class="btn btn-secondary">Preview</button>
         <div id="catalog-preview" class="results-list hidden"></div>
         <button id="btn-save-catalog" class="btn btn-primary hidden">Save to Catalog</button>
+
+        <p class="shop-section-title">Existing Weeks</p>
+        <div id="catalog-weeks-list" class="results-list"></div>
+        <div id="catalog-week-delete-confirm" class="parent-pin-entry shop-buy-confirm hidden">
+          <p class="hint">Delete <strong id="catalog-week-delete-label"></strong>? This removes it from the shared catalog for everyone using this code.</p>
+          <div class="parent-pin-actions">
+            <button id="btn-catalog-week-delete-yes" class="btn btn-danger">Yes, delete</button>
+            <button id="btn-catalog-week-delete-cancel" class="btn btn-ghost">Cancel</button>
+          </div>
+        </div>
       </div>
       <p class="hint" style="text-align:center;margin-top:18px;">Catalog code: <strong id="catalog-code-display"></strong></p>
       <button id="btn-copy-catalog-link" class="btn btn-ghost household-copy-btn">🔗 Copy invite link</button>
@@ -245,6 +256,11 @@
       <h2 class="week-label" id="home-week-label">This Week's Words</h2>
       <p class="word-count" id="home-word-count">0 words</p>
       <p class="medal-summary hidden" id="home-medal-summary"></p>
+      <div id="home-week-progress" class="week-progress hidden">
+        <div class="week-progress-track"><div id="week-progress-fill" class="week-progress-fill"></div></div>
+        <p class="week-progress-label" id="week-progress-label"></p>
+      </div>
+      <p id="home-gold-ring" class="gold-ring-row hidden"></p>
       <button id="btn-home-starter-lists" class="btn btn-primary hidden">⚡ Get Started with a Starter List</button>
       <button id="btn-change-week" class="btn btn-secondary change-week-btn">🔁 Change Week</button>
 
@@ -261,7 +277,16 @@
         <div id="streak-banner-dots" class="streak-banner-dots"></div>
       </div>
 
+      <button id="home-recommend" class="home-recommend hidden">
+        <span class="home-recommend-label">Start here</span>
+        <span id="home-recommend-text"></span>
+      </button>
+
       <div class="menu-grid">
+        <button class="menu-card" data-nav="word-list">
+          <span class="menu-icon">📖</span>
+          <span>This Week's Words</span>
+        </button>
         <button class="menu-card" data-nav="flashcard">
           <span class="menu-icon">🔊</span>
           <span>Look &amp; Say</span>
@@ -281,6 +306,7 @@
         <button class="menu-card" data-nav="speed-setup">
           <span class="menu-icon">⚡</span>
           <span>Speed Quiz</span>
+          <span class="menu-card-sub">needs a reader</span>
         </button>
         <button class="menu-card" data-nav="scramble">
           <span class="menu-icon">🔤</span>
@@ -301,6 +327,16 @@
         </button>
       </div>
       <button id="btn-manage-catalog" class="btn btn-ghost">📚 Manage Word Catalog</button>
+    </section>
+
+    <!-- SCREEN: This Week's Words (a clean reference list, not a progress view —
+         the first thing to open at the start of a week, before drilling) -->
+    <section id="screen-word-list" class="screen">
+      <h2>📖 This Week's Words</h2>
+      <p class="hint" id="word-list-week-label"></p>
+      <button id="word-list-hear-all" class="btn btn-secondary">🔊 Hear the Whole List</button>
+      <div id="word-list-rows" class="word-list-rows"></div>
+      <button id="word-list-exit" class="btn btn-primary shop-back-btn">Back to Menu</button>
     </section>
 
     <!-- SCREEN: Flashcard (Look & Say) -->
@@ -550,8 +586,26 @@
       <h2 id="test-results-title">Test Results</h2>
       <div class="score-circle" id="test-score-circle">0%</div>
       <p id="test-score-text" class="hint"></p>
+      <p id="test-results-best" class="hint wrapup-streak hidden"></p>
       <div id="test-results-list" class="results-list"></div>
+      <button id="test-results-practice-missed" class="btn btn-secondary hidden">✏️ Practice the Ones I Missed</button>
       <button id="test-results-done" class="btn btn-primary">Back to Menu</button>
+    </section>
+
+    <!-- SCREEN: Session Wrap-Up (mechanic 1) — the payoff moment for the five
+         round-based practice modes, replacing a toast that used to dump
+         straight back to Home. -->
+    <section id="screen-session-wrapup" class="screen">
+      <h2 id="wrapup-title">Session Complete</h2>
+      <div id="wrapup-stars-row" class="wrapup-stars-row hidden">
+        <span class="wrapup-stars-big">⭐ <span id="wrapup-stars-count">0</span></span>
+        <span class="hint">stars this round</span>
+      </div>
+      <div id="wrapup-medals" class="wrapup-medals hidden"></div>
+      <p id="wrapup-streak" class="wrapup-streak hidden"></p>
+      <p id="wrapup-nudge" class="wrapup-nudge hidden"></p>
+      <button id="wrapup-play-again" class="btn btn-secondary">🔁 Play Again</button>
+      <button id="wrapup-home" class="btn btn-primary">Home</button>
     </section>
 
     <!-- SCREEN: Progress -->
@@ -568,6 +622,14 @@
     <section id="screen-shop" class="screen">
       <h2>🛍️ Star Shop</h2>
       <p class="shop-lifetime" id="shop-lifetime"></p>
+      <p style="text-align:center;margin:-10px 0 18px;"><button id="btn-open-trophy-shelf" class="link-btn">🏆 My Trophy Shelf</button></p>
+      <div id="shop-buy-confirm" class="parent-pin-entry shop-buy-confirm hidden">
+        <p class="hint">Buy <strong id="shop-buy-confirm-label"></strong> for <strong id="shop-buy-confirm-price"></strong> ⭐?</p>
+        <div class="parent-pin-actions">
+          <button id="btn-shop-buy-confirm-yes" class="btn btn-primary">Yes, buy it</button>
+          <button id="btn-shop-buy-confirm-cancel" class="btn btn-ghost">Cancel</button>
+        </div>
+      </div>
       <div id="shop-chase-section" class="hidden">
         <p class="shop-section-title shop-chase-title">✨ Chase Avatars — Limited Time!</p>
         <div id="shop-chase" class="shop-grid shop-grid-char"></div>
@@ -579,6 +641,18 @@
       <p class="shop-section-title">Themes</p>
       <div id="shop-themes" class="shop-grid"></div>
       <button id="shop-exit" class="btn btn-primary shop-back-btn">Back to Menu</button>
+    </section>
+
+    <!-- SCREEN: Trophy Shelf (owned characters at full size, plus lifetime
+         stats — the shop only ever shows these small) -->
+    <section id="screen-trophy-shelf" class="screen">
+      <h2>🏆 My Trophy Shelf</h2>
+      <div id="trophy-stats" class="trophy-stats"></div>
+      <p id="trophy-gold-weeks-title" class="shop-section-title hidden">Gold Weeks</p>
+      <div id="trophy-gold-weeks" class="results-list"></div>
+      <p class="shop-section-title">Characters I've Earned</p>
+      <div id="trophy-characters" class="trophy-grid"></div>
+      <button id="trophy-shelf-exit" class="btn btn-primary shop-back-btn">Back to Shop</button>
     </section>
 
     <!-- SCREEN: Manage Avatars (parent-only — reached via Parent Dashboard) -->

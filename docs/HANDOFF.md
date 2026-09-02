@@ -1,6 +1,6 @@
 # Word Study — Handoff Document
 
-_Last updated: 2026-08-26_
+_Last updated: 2026-09-02_
 
 A static PWA (no build step, no backend beyond Firebase) built for the user's kids
 to self-study their weekly spelling/vocab word lists. Live at
@@ -67,6 +67,12 @@ every word, which is the clean split between it and Vocab Practice · Test Mode
 Smart Review (weakest words across every week practiced — see Usability
 features below; the only mode not scoped to a single week).
 
+Spelling Practice and Smart Review both hold a miss on screen until the child
+retypes the word correctly once ("Lock It In") before Continue appears — see
+"Lock It In retype + Practice Buddy" below. Word Scramble, Flip & Rate, and
+Match the Meaning are deliberately excluded from that gate (see that section
+for why).
+
 Test Mode's "Vocab Test" and Speed Quiz's "Vocab" kind are **deliberately NOT**
 filtered to defined words the way Vocab Practice is — they only ever show the
 word and ask for an honest self-rating, never promise a definition, so they
@@ -79,9 +85,11 @@ Word mastery medals (bronze/silver/gold, derived from stats, never stored) ·
 daily streaks + activity tracking · star shop (72 illustrated characters
 across a standard and a "chase" tier, 24 emoji avatars, 6 themes), fully
 parent-configurable via Manage Avatars (see below) · celebrations
-(confetti/chimes, mute toggle) · PIN-gated parent dashboard (read-only,
-local-storage-first with Firestore fallback). Explicit non-goals:
-leaderboards, badges, weekly goals, teacher dashboard.
+(confetti/chimes, mute toggle, and a Practice Buddy avatar that nods/cheers/
+wobbles in the header — see "Lock It In retype + Practice Buddy" below) ·
+PIN-gated parent dashboard (read-only, local-storage-first with Firestore
+fallback). Explicit non-goals: leaderboards, badges, weekly goals, teacher
+dashboard.
 
 ## Character avatars (`assets/avatars/`)
 
@@ -348,6 +356,45 @@ stay one number per word regardless of which vocab sub-mode produced the
 answer. **Test Mode's "Vocab Test" and Speed Quiz's "Vocab" kind are
 deliberately left unfiltered** — see Study modes above.
 
+## Lock It In retype + Practice Buddy (2026-08-27)
+
+**"Lock It In" retype gate.** On a miss in Spelling Practice or Smart Review,
+the correct spelling is shown as before, but Continue now stays hidden until
+the child types the word correctly once — framed as a positive "locking it
+in" moment (a distinct `playSound("lockin")` chime, not the first-try
+`"correct"` tone) rather than a penalty. A wrong retype just clears the input
+and shakes it (`.input-shake`, 0.3s) with no text or sound — the correct
+spelling is already on screen, so nothing needs restating. The retype is
+never passed to `recordAnswer()`: the miss was already recorded, so a second
+call would double-count the attempt and could hand out a medal-up for a word
+the child just got wrong. Scoped to only Spelling Practice and Smart Review —
+the two modes where the answer *is* the typed spelling. Explicitly excluded:
+Word Scramble (tiles, not typing), Flip & Rate (self-graded, no wrong answer
+to correct), and Match the Meaning (its existing green-highlight-the-right-
+choice behavior already fills the same role). One shared state machine
+(`retype`/`beginRetype`/`handleRetypeSubmit`/`endRetype`) drives both modes
+since their submit handlers are duplicated code, not a shared helper — the
+gate lives in one place instead of drifting between two copies.
+
+**Practice Buddy.** The equipped avatar — already shown in `#header-avatar`
+on every study screen — now reacts in place: a nod on a correct answer, a
+bigger cheer hop on streak milestones/medal-ups/perfect rounds/daily
+goals/shop purchases/a 90%+ test score, and a gentle wobble on a miss. Built
+as `reactBuddy(kind)` called *alongside* every existing `celebrate()`/
+`playSound()` call rather than a parallel decision tree, so it can't drift
+out of sync with the reward system those already drive. Purely visual — not
+gated by `isMuted()` (mute is an audio setting, not a motion setting) — and
+respects `prefers-reduced-motion`. Silent during Test Mode (`silent: true`),
+same as every other mid-test feedback, so a header bounce can't leak
+correctness before the results screen. `showScreen()` now calls both
+`endRetype()` and `clearBuddy()` so bailing out through the header 🏠 button
+mid-retype or mid-animation can never leave either feature in a stuck state
+on the next screen. Deliberately cut from the original pitch: an idle
+animation between questions, speech-bubble text, a second larger avatar in
+the practice card, per-mode personality, and a settings toggle — all judged
+not worth the added markup/maintenance for a 34px header figure; only
+`prefers-reduced-motion` support was kept.
+
 ## Word list duplicate check (fixed 2026-08-26)
 
 User found 3 of 12 words repeated within Grade 7 "Precision" Week 1 of the
@@ -361,7 +408,39 @@ different Latin-root words at the same difficulty (`altruistic`, `spurious`,
 Independently re-verified programmatically after the fix: all 24 weeks have
 exactly 12 case-insensitive-unique words. If more starter content is ever
 added, re-run this check — nothing enforces uniqueness at write time, since
-`starter-lists.js` is hand-authored content, not generated.
+`starter-lists.js` is hand-authored content, not generated. (Grade 5's pack
+no longer holds to the "24 weeks / 12 words" shape as of 2026-08-28 below —
+its replacement content was independently re-checked the same way, still
+duplicate-free, just at a different size.)
+
+## Grade 5 starter pack replaced with real curriculum (2026-08-28)
+
+The synthetic Grade 5 "Word Power" content (3 weeks × 12 made-up words) was
+replaced with an actual 5th-grade spelling curriculum, transcribed from
+photos of a physical Abeka-style workbook (Pensacola Christian College,
+2024) the user provided. **Two-agent pipeline**: one agent transcribed all 7
+photographed pages (Spelling Lists 3–8 and 10 — List 9 was that workbook's
+own review unit, recombining earlier words, and was deliberately skipped as
+not-new content); a second agent independently re-read the same 7 photos
+from scratch *before* looking at the first agent's output, then reconciled —
+catching and fixing 3 real transcription errors, all adjacent-item ordering
+swaps (List 6 words 17/18, List 8 words 16/17, and List 8 vocab words 28/29
+were each transposed in the first pass). The corrected result was then
+independently diffed against what actually landed in `starter-lists.js`
+before being called done.
+
+Unlike every other grade's pack, Grade 5 keeps each workbook list's **full**
+word count (22 words for Lists 3–8, 25 for List 10) rather than being
+trimmed to the other packs' ~8-spelling-plus-4-vocab convention — cutting
+real curriculum down to match placeholder-pack sizing would throw away words
+the child's actual assignment expects them to learn. Net effect: **7 weeks,
+215 words total**, up from 3 weeks / 36 words. `toWeeks()` and every UI call
+site (`starterPackWordCount()`, the starter-pack picker card) are already
+fully dynamic on `pack.weeks.length` and per-week word counts, so nothing
+else needed to change to support the larger pack. Bible-book spelling words
+(e.g. "Deuteronomy", "1 and 2 Samuel") are kept as plain spelling entries
+with the workbook's printed abbreviation dropped, since that abbreviation is
+a reference note, not part of the word itself.
 
 ## Privacy Policy & Terms of Use (added 2026-08-26)
 
@@ -393,9 +472,10 @@ The app's single biggest adoption blocker was that a brand-new family opened it
 to "No word list yet" and could do *nothing* until an adult typed out a full
 week of words. Now: Home's empty state shows a prominent **⚡ Get Started with
 a Starter List** button, and Manage Word Catalog offers the same thing, leading
-to a grade picker (Grades 1–8, 3 weeks × 12 words each — 8 spelling-only + 4
+to a grade picker (Grades 1–8, each 3 weeks × 12 words — 8 spelling-only + 4
 vocab-with-definition, matching the existing Abeka-style convention so every
-mode including Vocab Practice works immediately).
+mode including Vocab Practice works immediately — **except Grade 5**, which
+was replaced 2026-08-28 with a real, larger curriculum; see below).
 
 - Import reuses the **same** save path as the paste importer (`mergeWeeks`,
   local + Firestore write, `loadCatalogAndWeek` refresh) rather than a second
@@ -833,6 +913,311 @@ Settings, a card on the device). The `?household=CODE` invite-link query param
 already existed (pre-fills the field) but does **not** auto-submit, and can't
 be baked into the Home Screen icon reliably since the manifest's `start_url`
 is static and shared by the whole family, not personalizable per install.
+
+## School-readiness backlog, round 1 (2026-09-01)
+
+A Fable 5.1 codebase review produced a QoL backlog + a "Class Word Wall"
+differentiator pitch; the owner declined the Word Wall (read as a bolt-on) and
+asked for everything else implemented. This section is the result. Every item
+below is code-complete and syntax-checked; **no browser was available in this
+session to click through it live** — verification was static tracing plus one
+standalone Node script re-running the catalog parser's actual logic against
+real inputs (WEEK N targeting + the edit round-trip math), not a full in-app
+smoke test. Treat this as "implemented, wants a real click-through" rather
+than "verified working."
+
+**Anti-farming, round 2** (round 1 was the same-day `bonusRoundsToday` cap
+above `## Anti-farming star economy` in `docs/gamification-parent-mode-spec.md`
+§2): three more places could mint stars without being gated by that cap.
+- `recordAnswer()` gained an `opts.noStars` flag. Self-graded modes — Flip &
+  Rate's "I Knew It", Speed Quiz's "Got It" (both kinds), Vocab Test's "I Knew
+  It" — now always pass it: word stats/medals still update (the learning
+  signal stays honest), but no star, no first-practice bonus, no daily-goal
+  credit, no streak advance. `renderResultsScreen`'s own perfect-round bonus
+  gained a matching `allowBonus` flag (false for Speed Quiz always, false for
+  Vocab Test, true for Spelling Test).
+- New `offGradeWeek()`: the week picker lets a student browse another grade's
+  list (its own hint text suggests it) — stats still record on any grade, but
+  `noStars`/`canPay:false` now zero the stars when `state.selectedWeek.grade
+  !== state.profile.grade`. Smart Review is deliberately exempt (it pulls from
+  the student's own past weeks, which may legitimately be a past grade, not a
+  grade being browsed into).
+- `awardRoundCompletionBonus(session, canPay)` and `awardCappedBonus` both took
+  a `canPay` gate so the same noStars/offGrade logic reaches the perfect-round
+  and retry-clear bonuses, not just per-answer stars.
+
+**Per-device activity caps** (`getOrInitActivity()` was localStorage-only, so
+a second device reset every cap to zero): `selectProfile()` now fetches
+today's remote activity doc once via the existing `Sync.fetchActivityRange`
+and merges it with the local one through a new `mergeActivityDocs()` — max of
+every counter/map entry, OR of every boolean flag — before either is used or
+pushed. Same call also seeds Smart Review's pool (`loadAllProgressDocs`) from
+`Sync.fetchAllProgress` when the local index is empty, so a new/wiped device
+isn't starting with zero review words.
+
+**Grade 5 content compatibility**: `scrambleSafeWords()` filters entries with
+digits or spaces (`"1 and 2 Samuel"`) out of Word Scramble's queue — real
+shipped curriculum, not hypothetical, see the Grade 5 section above. A new
+`normalizeSpelling()` (trim + collapse internal whitespace + lowercase)
+replaces the ad hoc `.trim().toLowerCase()` compares at every spelling-grading
+site (Spelling Practice, Smart Review, Test Mode, the "Lock It In" retype
+target) — doesn't fix the TTS-pronounces-digits-as-words mismatch, that's a
+bigger problem, but removes stray-whitespace false negatives.
+
+**School-shared catalog now actually shareable**: `openCatalogEditor()`'s
+`ownerToken` check used to permanently lock every household but the one that
+created a shared catalog out of editing it — contradicted
+`docs/school-scale-plan.md`'s stated design. New `editorTokens` array on the
+catalog doc (`Sync.addCatalogEditor`, arrayUnion) plus an explicit "enable
+editing for this class too" button on the readonly note — deliberate, not
+auto-granted on connect, same soft-guardrail posture as `ownerToken` itself.
+
+**Per-week catalog edit/delete** (`## Manage Word Catalog` screen): the only
+edit path used to be re-pasting an entire grade's year, and a single-week
+paste silently landed on week 1 every time. `parseCatalogText()` now accepts
+an explicit `WEEK N` line that overrides the auto-incremented position for
+the block that follows it (a plain multi-week paste with no `WEEK` lines is
+unaffected — verified both cases with the standalone parser trace mentioned
+above). A new "Existing Weeks" list under the paste box offers ✏️ (loads that
+week back into the paste box via `weekToPasteText()`/`impliedSeriesStart()`,
+which reconstructs the GRADE header's implied start date so re-parsing
+regenerates the exact same week id and date) and 🗑️ (in-app confirm, then
+`Sync.deleteCatalogWeek`). **`docs/firestore.rules`'s `catalogs/*/weeks/*`
+delete rule changed from `if false` to `if signedIn()`** to match — that file
+is still explicitly marked NOT YET APPLIED to the live project; if it's ever
+applied as it stood before this change, per-week delete would silently fail
+against real Firestore rules even though the client code works. Apply the
+updated rules file in the Firebase console for delete to actually work live.
+
+**Firestore write volume** (`docs/school-scale-plan.md`'s capacity math
+assumed less than this actually cost): `persistProfile()` → `Sync.pushProfile`
+and `saveProgress()` → `Sync.pushProgress` are now debounced ~2s
+(`scheduleProfilePush`/`scheduleProgressPush`, force-flushed via
+`flushPendingSyncPushes()` at the exact same moments `flushActivity()` already
+treats as "must not lose this": session end, every 10th answer, tab hidden,
+and now also the top of `selectProfile()` so switching profiles mid-session
+can't let one profile's still-pending write get clobbered by the next
+profile's first write landing in the same global pending slot). `pushProfile`/
+`pushProgress`/`pushActivity` in `sync.js` now `return` their write promises
+instead of firing-and-forgetting internally — additive, every existing caller
+still ignores the return value exactly as before. `watchProfiles()`'s
+`migrateStudentIfNeeded` gained a cache, but ONLY for the "confirmed to
+already have a `students/{id}` doc" branch — the still-migrating branch stays
+deliberately uncached, for the exact blanking-bug reason documented in that
+function already.
+
+**New: "This Week's Words"** (`openWordList()`, first tile on Home) — a plain
+reference list of the current week's words in catalog order with a speaker
+button and each word's definition when one exists (nothing shown when there
+isn't, same rule `wordsWithDefinition()` already documents for Look & Say).
+No stats, no medals — Progress already covers that; this is what a kid reaches
+for at the start of a week, before drilling. A "Hear the Whole List" button
+speaks all the words as one combined utterance (comma-joined) rather than
+looping `speak()`, since `speak()` cancels any utterance already in progress.
+
+**Home screen additions**: a "N of TOTAL words at Silver or better" progress
+bar under the week label (same visual language as the daily-goal track — both
+answer "am I done," different time scales); a one-time toast recap
+("Last week: 🥇 N · 🥈 N — new list!") the first time Home auto-advances onto
+a new week, via `checkWeekRollover()`/`ws_last_seen_week_{profileId}`; a
+"Start here" recommendation card above the tile grid
+(`renderHomeRecommendation()`) driven by simple priority rules over data
+every mode already produces. Also fixed the bug the progress bar and recap
+both depend on reading correctly: `loadCatalogAndWeek()` used to prefer a
+saved `ws_selected_week_*` pin forever once "Change Week" was tapped once —
+it now expires that pin once the auto-computed week for the SAME grade has
+genuinely moved past it (a deliberate look at a different grade is left
+alone, since there's no "current week" to compare against for a grade the
+profile isn't in).
+
+**Test Results / Speed Quiz results**: a "✏️ Practice the Ones I Missed"
+button launches Spelling Practice (or Flip & Rate for vocab misses, filtered
+to words that actually have a definition) on just the missed word subset —
+`openSpelling`/`openVocab`/`openScramble` all now accept an optional word
+subset, falling back to the full current week when none is given. Deliberately
+NOT added to the parent dashboard's needs-work list — that would mean
+launching a study session as a student from inside a read-only parent-mode
+screen, a bigger change (session/identity handling) than this item's scope
+warranted; a kid reaching for their own Progress/results screen is the
+lower-risk place for this.
+
+**Parent Dashboard**: inline student name/grade editing (`renderStudentCard`'s
+new ✏️ toggle + `saveStudentEdit`) — there was no edit path at all before this,
+which matters once a year (promotion) and once per roster typo caught on day
+one; delete is still deliberately absent, see the existing PARENT SELF-MANAGE
+section above for why. A "This week's hardest words (whole class)" card
+(`renderHardestWordsCard`) aggregates the SAME per-student current-week data
+`loadParentDashboard` already fetches — zero new reads. Above
+`PROFILE_SEARCH_THRESHOLD` (8) students, the dashboard renders a compact
+sortable table (`renderRosterTable`, least-active-first) instead of one full
+card per kid, each row expanding lazily into the existing full card on tap.
+
+**Star Shop**: native `confirm()` on purchases replaced with an in-app
+confirm box (`requestBuyItem`/`pendingBuy`) — the same "a native dialog reads
+as a browser error inside an installed PWA" reasoning was then reused for the
+new catalog week-delete confirm too, rather than reaching for `confirm()`
+there as a new precedent. A new "🏆 My Trophy Shelf" screen (reached from the
+shop) shows every owned illustrated character at full size with its earn
+date (`unlockDates`, recorded since 2026-08-28 but never surfaced until now),
+plus lifetime stars / best streak / gold-word count aggregated the same
+device-local way Smart Review's pool already is. Match the Meaning's
+distractor pool now tops up from other weeks of the same grade
+(`extraDistractorPool`) when the current week has fewer than 6 defined words,
+so the same 3 wrong answers don't repeat every round. A small header dot
+(`sync-status-dot` — synced/pending/offline, hidden entirely when sync isn't
+enabled for the household) reflects whether the debounced writes above have
+actually reached Firestore. Speed Quiz's Home tile now says "needs a reader"
+underneath, and the viewport meta's `maximum-scale=1` (blocked pinch-zoom) is
+gone.
+
+**Copy pass**: light, not a rewrite — "Parent Dashboard" → "Parent / Teacher
+Dashboard", "Add a parent" → "Add a parent or teacher", the household-connect
+subtitle and a few Privacy Policy sentences now say "family or class"/"parent
+or teacher" instead of assuming a family. Same wording chosen once and
+threaded through, not a deep rewrite of the legal page.
+
+**Deliberately deferred, not forgotten**: a "promote all students +1 grade"
+bulk button (mentioned as a nice-to-have alongside the per-student grade edit,
+didn't fit cleanly into this pass); any further Match the Meaning / week-list
+polish beyond what's listed above.
+
+## Gamification, round 2: the addictive-loop pass (2026-09-02)
+
+A second, narrower Fable 5.1 pass (separate from the school-readiness review
+above) diagnosed the reward loop as "correct but flat" — every mode paid the
+same +1 star with the same sound, and five of seven modes ended on a 1.8s
+toast dumped straight to Home with no session summary. The owner approved all
+8 proposed mechanics ("all 8 mechanics"). Screened for the difference between
+compelling and manipulative throughout: no loss-framing, no purchasable
+streak insurance, no chance-based reward, nothing visible to other students.
+Built and verified live in a real browser this session (not just statically
+traced) — see the star-math cross-check below.
+
+**Mechanic 1, Session Wrap-Up** (`showSessionWrapUp`, new
+`#screen-session-wrapup`): Spelling, Vocab Flip & Rate, Match the Meaning,
+Word Scramble, and Smart Review now end on a results card — stars earned
+this session, every word that leveled a medal, the best in-session streak,
+and a "next time" line naming the word closest to its next medal — instead
+of a toast to Home. **Play Again** relaunches the same mode on the same word
+set directly. `showStars` is false whenever the session was `noStars`/
+off-grade throughout (self-graded or wrong-grade) — frames around medals
+instead of a stars tally that would read as a broken "0". Smart Review
+previously had NO completion reward at all (`awardRoundCompletionBonus`
+wasn't wired into its finish path); it now gets one, built by hand since
+`reviewSession` is a flat single pass with no round/retry shape to reuse.
+Each of the 5 session objects (`spell`, `vocab`, `vmatch`, `scramble`,
+`reviewSession`) grew `starsThisSession`/`medalUps`/`bestStreak`/`wordSet`,
+accumulated via `trackSessionResult()` called right after every
+`recordAnswer()`. **Bug found and fixed during live testing**:
+`trackSessionResult()` originally set `bestStreak` from `session.streak`
+before the caller's own `.streak++`, so a session correct the whole way
+through reported one less than its true best (11 instead of 12 on a 12-word
+perfect run) — moved the `bestStreak` update to right after each mode's own
+increment instead. **Second bug found and fixed**: the wrap-up's star tally
+initially only summed `recordAnswer()`'s return value, missing every bonus
+awarded via a separate `addStars()` call (bonus word, hot-streak milestones,
+round-completion) — `awardRoundCompletionBonus`, `handleHotStreak`, and
+`checkBonusWord` below now all add to `session.starsThisSession` themselves
+when their own bonus actually pays. Verified live: a 12-word perfect
+Spelling round showing "25 stars this round" cross-checked exactly against
+12 base + 2 (streak-5) + 3 (streak-10) + 3 (bonus word) + 5 (perfect round).
+
+**Mechanic 2, star fly-in + count-up** (`animateStarGain`, called from the
+one `addStars()` choke point): a `+N` particle rises and fades from
+`#header-stars`, and the header number ticks up over ~400ms instead of
+snapping. `#header-stars` gained a nested `#header-stars-count` span so the
+particle (appended as a sibling) survives the count-up's own `textContent`
+writes. Skips straight to the final value under `prefers-reduced-motion`,
+same posture as the existing buddy-animation media query.
+
+**Mechanic 3, next-medal nudge** (`medalProgress`/`medalProgressText`, next
+to `wordMedal`): mirrors `wordMedal`'s own thresholds to report how many more
+correct answers a word needs for its next medal ("2 more for Silver"), or
+"Keep it up for X" when the raw count is already there but accuracy isn't.
+Gold reports nothing (nowhere left to go). Surfaced via `appendMedalNudge()`
+on the correct-feedback line in Spelling/Match/Scramble/Smart Review (NOT
+Flip & Rate — self-graded taps have no feedback box to hook into) and as a
+small line per word on the Progress screen.
+
+**Mechanic 4, hot-streak escalation**: the correct-answer chime's pitch
+rises a step per in-session streak point, capped at 8 steps
+(`playSound("correct", streakStep)` — `recordAnswer()` gained an
+`opts.streakStep` parameter since it has no access to a mode's own streak
+counter, which lives on the session object and increments AFTER
+`recordAnswer()` returns; callers pass `session.streak + 1`, the value about
+to become true). At streak 5/10/15 (`handleHotStreak`, `HOT_STREAK_BONUSES`)
+a named burst fires with a small bonus (+2/+3/+4) routed through the
+existing `awardCappedBonus` — shares the same 8/day round-bonus budget on
+purpose, so it can't mint currency independently of every other bonus in
+this file. `canPay: false` (self-graded/off-grade) skips the bonus AND the
+burst sound entirely; the plain pitch-rise still plays regardless (feedback,
+not currency). A streak of 5+ ending (a miss — the only place `.streak` gets
+reset) now names what was achieved via `endStreak()`
+("That was a 9-streak — nice!") — never that it ended or was lost.
+
+**Mechanic 5, Bonus Word** (`pickBonusWord`, `checkBonusWord`,
+`MAX_BONUS_WORDS_PER_DAY = 5`): one word per session (Spelling, Match,
+Scramble — NOT Vocab Flip & Rate, which is always self-graded and can never
+back up a payout, and NOT Test Mode, silent by design) is secretly worth +3,
+weighted toward the profile's own weaker half via the existing
+`wordsNeedingWork()` ranking rather than the single weakest word (keeps it a
+real surprise). Revealed only on a correct answer — a miss is just a normal
+miss, no reveal, no "you missed it" framing. If never reached, the wrap-up
+screen (mechanic 1) names it after the fact: `"jump" — get it next time!`
+via `bonusWordMissedNudge()`. Capped separately from the round-bonus budget
+(`bonusWordsToday` on the activity doc, alongside `bonusRoundsToday`) so a
+short list can't be farmed for repeated bonus draws.
+
+**Mechanic 6, Gold the List** (`checkGoldTheList`, `GOLD_LIST_BONUS = 15`): a
+one-time trophy per week when every word in `state.progress.words` reaches
+Gold — checked against the FULL current week, never a session's own subset,
+since completing the list is a whole-week event. Recorded permanently as
+`profile.weekTrophies[weekId] = dateAwarded` (new field, threaded through
+`sync.js`'s `pushProfile`/`migrateStudentIfNeeded`/`watchProfiles` allowlists
+and `applyRemoteProfileUpdate`'s field list — same shape as `unlockDates`).
+A `🥇 N of TOTAL Gold` line sits on Home under the existing week-progress
+bar, flipping to `🏆 All Gold — earned <date>!` once banked. The Trophy
+Shelf screen (added in the school-readiness pass) grew a "Gold Weeks"
+section listing every earned trophy, week label looked up against the
+currently loaded catalog (falls back to the raw id for a week the
+family/class has since moved off of, rather than hiding an earned trophy).
+Excluded from off-grade weeks via `offGradeWeek()`.
+
+**Mechanic 7, Beat Your Best** (`recordTestResult`, `bestPriorScore`,
+`RECENT_TESTS_MAX = 10`, up from 5): `profile.recentTests` entries gained a
+`mode` field (`"test"` vs `"speed"`) so a swipe-graded Speed Quiz score can
+never be compared against a real typed/checked Test Mode one — different
+rigor, kept separate. Test/Speed results now show "Best: N%" for the
+matching `weekId`+`kind`+`mode`, or "New best! 73% → 87%" on improvement.
+On a tied or lower score, shows ONLY the existing best — never the current
+number, never a delta, never a down-arrow. No line at all when there's no
+prior comparable run (first attempt on that combination). Speed Quiz now
+writes into `recentTests` too (it never did before this pass), which is
+what makes its own "Best" comparisons possible at all.
+
+**Mechanic 8, Earned Streak Shield** (`ensureStreakForToday`): every 7 days
+of an active daily streak banks one shield, capped at holding 1
+(`p.streakShields`, new field, threaded through the same sync allowlists as
+`weekTrophies`). If exactly one day is missed AND a shield is held, it
+auto-spends to continue the streak as if uninterrupted — free, automatic, no
+purchase path, no shop entry, no player-facing toggle or countdown. Only
+ever surfaces at the moment it saves something ("🛡️ Your shield kept your
+streak going!") — never a warning about running low. This is the considered
+alternative to a purchasable streak-freeze (the mechanic Duolingo gets
+criticized for): earned by studying, not sold, and it removes the anxiety
+point (the cliff) instead of selling insurance against it.
+
+**Judgment calls**: mechanic 5's bonus is +3 (between the per-word +1 and
+the milestone +2/+3/+4, deliberately not the biggest number in the file so
+it reads as a nice surprise rather than the main event); mechanic 6's
+display lives on Home (the ambient counter) + Trophy Shelf (the permanent
+record) rather than a third new screen; mechanic 7's cap moved from 5 to 10
+specifically so a week of practice can't evict the actual best score right
+before a kid gets a chance to beat it. Gold-the-list's +15 and the daily
+first-practice +3 are deliberately NOT counted in the wrap-up's
+"stars this round" tally — both are day/week-scale bonuses with their own
+toast, not literally "from this round," and folding them in would make the
+number harder to reason about, not easier.
 
 ## Parked / not built
 

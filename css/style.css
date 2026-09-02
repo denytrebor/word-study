@@ -71,6 +71,22 @@ header#app-header.hidden { display: none; }
 }
 #header-stars { font-size: 0.85em; opacity: 0.9; }
 .header-right { display: flex; gap: 8px; align-items: center; }
+/* SYNC STATUS DOT — hidden entirely for a fully local/offline household
+   (see refreshSyncStatus in app.js): with no sync configured, the concept
+   of "synced or not" doesn't apply, and showing a dot anyway would just be
+   a permanent, unexplained grey light. Colors are fixed, not theme --accent,
+   same reasoning as the streak dots: this is a status signal, not decor. */
+.sync-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #9ca3af;
+}
+.sync-status-dot.hidden { display: none; }
+.sync-status-dot.sync-online { background: #4ade80; }
+.sync-status-dot.sync-pending { background: #fbbf24; }
+.sync-status-dot.sync-offline { background: #9ca3af; }
 
 .icon-btn {
   background: rgba(255,255,255,0.15);
@@ -287,6 +303,19 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
   padding: 20px;
 }
 .psc-identity { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.psc-edit-toggle {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 6px;
+  flex-shrink: 0;
+}
+.psc-edit-form { margin: 0 0 14px; padding: 12px; background: var(--bg); border-radius: 14px; }
+.psc-edit-form.hidden { display: none; }
+.psc-edit-form .new-profile-form { margin-bottom: 8px; }
+.psc-edit-actions { display: flex; gap: 10px; }
+.psc-edit-actions .btn { margin-top: 0; }
 .psc-identity .avatar { font-size: 2.2rem; }
 .psc-identity .psc-name { font-weight: 800; font-size: 1.15rem; }
 .psc-identity .psc-meta { color: var(--muted); font-size: 0.85rem; }
@@ -323,6 +352,21 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
 .psc-pct-red { color: var(--danger); font-weight: 800; }
 .psc-empty { color: var(--muted); font-style: italic; font-size: 0.9rem; }
 .psc-loading { color: var(--muted); font-style: italic; }
+/* ROSTER TABLE (C2) — compact view above PROFILE_SEARCH_THRESHOLD students;
+   its own horizontal scroller so five columns never force the whole page
+   to scroll sideways on a phone. */
+.roster-table-wrap { overflow-x: auto; margin-bottom: 18px; -webkit-overflow-scrolling: touch; }
+.roster-table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+.roster-table th, .roster-table td { padding: 10px 12px; text-align: left; white-space: nowrap; font-size: 0.88rem; }
+.roster-table th { color: var(--muted); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--border); }
+.roster-row { cursor: pointer; border-bottom: 1px solid var(--border); }
+.roster-row:active { background: var(--bg); }
+.roster-name { display: flex; align-items: center; gap: 8px; font-weight: 700; white-space: nowrap; }
+.roster-name .avatar { font-size: 1.3rem; }
+.roster-detail-row.hidden { display: none; }
+.roster-detail-row td { white-space: normal; padding: 12px; background: var(--bg); }
+.roster-detail-row .parent-student-card { box-shadow: none; }
+
 .parent-self-manage { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); }
 .parent-self-manage .new-profile-form { margin-bottom: 6px; }
 .parent-self-delete { max-width: 420px; margin: 6px auto 0; display: block; font-size: 0.9rem; color: var(--danger); }
@@ -366,6 +410,14 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 .medal-summary { text-align: center; font-weight: 700; margin-top: 0; margin-bottom: 24px; }
 .medal-summary.hidden { display: none; }
 
+/* WEEK PROGRESS — same visual language as the daily-goal track below,
+   deliberately: both answer "am I done?", just at different time scales. */
+.week-progress { max-width: 420px; margin: 0 auto 16px; }
+.week-progress.hidden { display: none; }
+.week-progress-track { height: 10px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.week-progress-fill { height: 100%; width: 0%; border-radius: 999px; background: var(--primary); transition: width 0.35s ease; }
+.week-progress-label { text-align: center; color: var(--muted); font-size: 0.85rem; margin: 6px 0 0; }
+
 .streak-banner {
   background: var(--card);
   box-shadow: var(--shadow);
@@ -381,6 +433,36 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 .streak-dot { width: 15px; height: 15px; border-radius: 50%; background: var(--border); }
 .streak-dot.filled { background: var(--accent); }
 .streak-dot.today { box-shadow: 0 0 0 2px var(--primary); }
+
+/* HOME "START HERE" — one steer above the free-choice grid, not a gate; the
+   accent border borrows the same --accent token the daily streak text uses,
+   so it reads as "the one warm thing on this screen" rather than a new color. */
+.home-recommend {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin: 0 0 16px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+.home-recommend.hidden { display: none; }
+.home-recommend:active { transform: scale(0.98); }
+.home-recommend-label {
+  display: block;
+  font-weight: 800;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
 .menu-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -403,6 +485,10 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 }
 .menu-icon { font-size: 2.2rem; }
 .menu-card:active { transform: scale(0.97); }
+/* Speed Quiz is the one Home tile a kid can't run alone (a grown-up has to
+   read each word) — everything else on this grid is self-serve, so it's the
+   one that needs to say so, not a general-purpose tile annotation. */
+.menu-card-sub { margin-top: -6px; font-size: 0.7rem; font-weight: 600; color: var(--muted); }
 
 /* EDIT LIST */
 .paste-box { margin: 16px 0; }
@@ -557,6 +643,10 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 .feedback.correct { background: var(--success-bg); color: var(--success); }
 .feedback.incorrect { background: var(--danger-bg); color: var(--danger); }
 .feedback .correct-answer { display: block; margin-top: 6px; font-size: 1.3rem; letter-spacing: 0.03em; }
+/* Mechanic 3 ("next-medal nudge") — a quieter second line under the main
+   feedback text, not another loud badge; it's a hint, not an achievement. */
+.feedback .medal-nudge { display: block; margin-top: 6px; font-size: 0.85rem; font-weight: 600; opacity: 0.75; }
+.progress-medal-nudge { display: block; font-size: 0.75rem; font-weight: 400; color: var(--muted); margin-top: 2px; }
 
 /* "LOCK IT IN" RETYPE
    The prompt line lives inside the same .feedback box as the correct spelling so
@@ -713,6 +803,16 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   font-weight: 600;
 }
 .result-row .status-icon { font-size: 1.2rem; }
+.catalog-week-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.icon-btn-sm {
+  background: var(--bg);
+  border: none;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
 .result-row.status-solid { border-left: 6px solid var(--success); }
 .result-row.status-shaky { border-left: 6px solid var(--danger); }
 .result-row.status-new { border-left: 6px solid var(--border); }
@@ -727,6 +827,10 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 
 /* STAR SHOP */
 .shop-lifetime { text-align: center; color: var(--muted); font-size: 0.9rem; margin: -6px 0 18px; }
+/* The shared .parent-pin-entry box is 260px (sized for a PIN pad) — this one
+   carries an item name and price and needs a bit more room, same reasoning
+   as .parent-self-confirm above. */
+.shop-buy-confirm { max-width: 320px; }
 .shop-section-title { font-weight: 700; color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 22px 0 10px; }
 .shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 12px; }
 .shop-item {
@@ -790,6 +894,46 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 }
 
 .shop-chase-title { color: #b45309; }
+
+/* TROPHY SHELF */
+.trophy-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 8px 0 22px;
+}
+.trophy-stat {
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border-radius: 16px;
+  padding: 14px 8px;
+  text-align: center;
+}
+.trophy-stat-value { font-size: 1.4rem; font-weight: 800; }
+.trophy-stat-label { font-size: 0.72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 2px; }
+.trophy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.trophy-card {
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+  padding: 14px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+}
+.trophy-card.legendary { background: linear-gradient(160deg, #fff7e6, var(--card) 60%); }
+.trophy-card-img { height: 120px; display: flex; align-items: flex-end; justify-content: center; }
+.trophy-card-img img { max-height: 120px; width: auto; }
+.trophy-card-label { font-weight: 700; font-size: 0.85rem; }
+.trophy-card-date { font-size: 0.72rem; color: var(--muted); }
+.trophy-empty { color: var(--muted); font-style: italic; text-align: center; margin: 20px 0; }
 
 /* MANAGE AVATARS (parent admin — active toggle + price per character) */
 .manage-avatar-grid {
@@ -893,6 +1037,30 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 }
 .daily-goal-fill.met { background: var(--success); }
 
+/* THIS WEEK'S WORDS (a reference list, not a progress view — no medals or
+   accuracy here on purpose, see js/app.js openWordList) */
+.word-list-rows { display: flex; flex-direction: column; gap: 10px; margin: 14px 0 24px; }
+.word-list-row {
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.word-list-row-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.word-list-row-word { font-weight: 800; font-size: 1.15rem; }
+.word-list-row-speak {
+  flex-shrink: 0;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  font-size: 1.05rem;
+  cursor: pointer;
+}
+.word-list-row-def { color: var(--muted); font-size: 0.9rem; margin: 6px 0 0; }
+
 /* SMART REVIEW */
 .menu-card-review { position: relative; }
 .menu-card-badge {
@@ -986,3 +1154,43 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 @media (prefers-reduced-motion: reduce) {
   .buddy-nod, .buddy-cheer, .buddy-wobble, .input-shake { animation: none; }
 }
+
+/* Mechanic 2 ("star fly-in + count-up") — the particle is a child of
+   #header-stars, not of the count span, so the count-up's own textContent
+   writes (on the count span only) never wipe it out mid-animation. */
+#header-stars { position: relative; }
+.star-particle {
+  position: absolute;
+  top: -4px;
+  right: 4px;
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: var(--warn, #d97706);
+  animation: star-particle-rise 0.9s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes star-particle-rise {
+  0% { opacity: 0; transform: translateY(4px) scale(0.8); }
+  20% { opacity: 1; transform: translateY(0) scale(1.1); }
+  100% { opacity: 0; transform: translateY(-22px) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .star-particle { animation: none; display: none; }
+}
+
+/* Mechanic 1 ("Session Wrap-Up") */
+#screen-session-wrapup { text-align: center; }
+.wrapup-stars-row { margin: 10px 0 20px; }
+.wrapup-stars-big { display: block; font-size: 2.2rem; font-weight: 800; color: var(--warn, #d97706); }
+.wrapup-medals { text-align: left; max-width: 360px; margin: 0 auto 18px; }
+.wrapup-medal-row { background: var(--success-bg); color: var(--success); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; font-weight: 700; }
+.wrapup-streak { font-weight: 700; color: var(--accent, #4338ca); margin-bottom: 10px; }
+.wrapup-nudge { color: var(--muted); font-size: 0.95rem; margin-bottom: 20px; }
+
+/* Mechanic 4 ("hot-streak escalation") — named achievement, not a warning;
+   only ever appears alongside a positive streak toast. */
+.streak-hot-toast { font-weight: 800; }
+
+/* Mechanic 6 ("Gold the List") — mirrors the week-progress bar the backlog
+   fork added, so the two read as one family on Home. */
+.gold-ring-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 14px; font-weight: 700; color: var(--warn, #d97706); }

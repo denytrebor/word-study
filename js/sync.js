@@ -147,21 +147,40 @@ const Sync = (function () {
   // old fields just sit there unread forever (see the plan's additive-only
   // rule).
   //
-  // Deliberately has NO "already migrated this session" cache — an earlier
-  // version did, and it silently blanked a real student's stars/name/avatar
-  // to zero the moment the migration write failed once (e.g. Firestore rules
-  // not yet covering the new collection — exactly what happened in testing,
-  // see docs/phase-a-student-model-plan.md's Implementation Notes) and a
+  // An earlier version cached "already migrated" broadly, and it silently
+  // blanked a real student's stars/name/avatar to zero the moment the
+  // migration write failed once (e.g. Firestore rules not yet covering the
+  // new collection — exactly what happened in testing, see
+  // docs/phase-a-student-model-plan.md's Implementation Notes), because a
   // LATER call for the same id trusted the cache, skipped recomputing from
-  // enrollmentData, and returned {} instead. Recomputing from enrollmentData
-  // on every call where the student doc doesn't exist costs one extra doc
-  // read (this isn't a hot path — once per profile per snapshot fire) and
-  // means a persistently-failing write degrades to "keeps retrying, keeps
-  // showing correct data" instead of "works once, then blanks."
+  // enrollmentData, and returned {} instead. The still-migrating branch below
+  // MUST keep recomputing from enrollmentData on every call — a persistently-
+  // failing write must degrade to "keeps retrying, keeps showing correct
+  // data," never "works once, then blanks."
+  //
+  // The cache re-added below for A3 (docs/HANDOFF.md school-scale write-
+  // amplification) is deliberately narrower than that earlier one: keyed
+  // ONLY on "confirmed to already have a students/{id} doc" (the sSnap.exists
+  // branch), never on the still-migrating branch above, so it can't
+  // reintroduce the blanking bug. Once a student is in this cache,
+  // watchProfiles() below stops re-reading their doc on every later
+  // snapshot — safe because that listener only fires on enrollment-doc
+  // changes (a grade edit, a new student), never on the student doc itself,
+  // so a cached entry here was never "live" in the first place; this only
+  // removes redundant re-reads of data that wasn't getting any fresher
+  // anyway. A student's OWN active session still gets true live updates
+  // through watchProfile() (singular), which is unaffected.
+  const migratedCache = new Map();
+
   async function migrateStudentIfNeeded(id, enrollmentData) {
+    if (migratedCache.has(id)) return migratedCache.get(id);
     const sRef = studentRef(id);
     const sSnap = await sRef.get().catch(() => null);
-    if (sSnap && sSnap.exists) return sSnap.data();
+    if (sSnap && sSnap.exists) {
+      const data = sSnap.data();
+      migratedCache.set(id, data);
+      return data;
+    }
     const migrated = {
       name: enrollmentData.name || "", avatar: enrollmentData.avatar || "",
       stars: enrollmentData.stars || 0, currentStreak: enrollmentData.currentStreak || 0,
@@ -170,34 +189,41 @@ const Sync = (function () {
       unlockDates: enrollmentData.unlockDates || {},
       equippedAvatar: enrollmentData.equippedAvatar || "", equippedTheme: enrollmentData.equippedTheme || "",
       lifetimeStars: enrollmentData.lifetimeStars || 0,
+      weekTrophies: enrollmentData.weekTrophies || {}, streakShields: enrollmentData.streakShields || 0,
     };
     sRef.set(migrated).catch(warnWriteFailed("student migration " + id));
     return migrated;
   }
 
+  // Returns the write promise(s) (settled, never rejected — every branch
+  // already ends in .catch(warnWriteFailed)) so a caller that cares about
+  // completion, not just fire-and-forget, can track it — see B6's
+  // trackSyncWrite in app.js. Every existing caller still ignores the return
+  // value exactly as before; this is additive.
   async function pushProfile(profile) {
     const ref = profileRef(profile.id);
     if (!ref || !(await ready)) return;
     if (profile.role === "parent") {
-      ref.set({ name: profile.name || "", role: "parent", pin: profile.pin || "" }, { merge: true })
+      return ref.set({ name: profile.name || "", role: "parent", pin: profile.pin || "" }, { merge: true })
         .catch(warnWriteFailed("profile " + profile.id));
-      return;
     }
     // Enrollment doc is now THIN for students — just the class-scoped fields.
     // merge:true only adds/overwrites these two named fields, so a legacy
     // profile's old reward fields (stars, unlocks, etc. from before this
     // split) are left sitting on the doc untouched, never stripped.
-    ref.set({ grade: profile.grade || "", role: "" }, { merge: true })
+    const enrollmentWrite = ref.set({ grade: profile.grade || "", role: "" }, { merge: true })
       .catch(warnWriteFailed("enrollment " + profile.id));
     const sRef = studentRef(profile.id);
-    sRef.set({
+    const studentWrite = sRef.set({
       name: profile.name || "", avatar: profile.avatar || "", stars: profile.stars || 0,
       currentStreak: profile.currentStreak || 0, bestStreak: profile.bestStreak || 0,
       lastActiveDate: profile.lastActiveDate || "", recentTests: profile.recentTests || [],
       unlocks: profile.unlocks || [], unlockDates: profile.unlockDates || {},
       equippedAvatar: profile.equippedAvatar || "",
       equippedTheme: profile.equippedTheme || "", lifetimeStars: profile.lifetimeStars || 0,
+      weekTrophies: profile.weekTrophies || {}, streakShields: profile.streakShields || 0,
     }, { merge: true }).catch(warnWriteFailed("student " + profile.id));
+    return Promise.all([enrollmentWrite, studentWrite]);
   }
 
   // The app's first and only delete. It may ONLY ever be pointed at a
@@ -252,6 +278,7 @@ const Sync = (function () {
           lastActiveDate: s.lastActiveDate || "", recentTests: s.recentTests || [],
           unlocks: s.unlocks || [], unlockDates: s.unlockDates || {}, equippedAvatar: s.equippedAvatar || "",
           equippedTheme: s.equippedTheme || "", lifetimeStars: s.lifetimeStars || 0,
+          weekTrophies: s.weekTrophies || {}, streakShields: s.streakShields || 0,
         };
       }));
       onChange(merged);
@@ -352,6 +379,24 @@ const Sync = (function () {
     return snap.exists ? snap.data() : null;
   }
 
+  // A school-wide catalog is created by whichever class connects to it
+  // first, and ownerToken alone would then lock every other class out of
+  // ever adding their own grade's weeks — exactly the gap
+  // docs/school-scale-plan.md's "any connected household can add to it"
+  // claim didn't actually implement. editorTokens is an explicit, additive
+  // grant (a teacher taps a button, this is not auto-granted on connect) so
+  // it stays a deliberate action instead of a silent bypass, matching the
+  // soft-guardrail posture of ownerToken itself — arrayUnion so two teachers
+  // requesting access around the same time can't clobber each other's grant.
+  async function addCatalogEditor(catalogCode) {
+    const ref = catalogRef(catalogCode);
+    if (!ref || !(await ready)) return false;
+    const token = await ensureOwnerToken();
+    if (!token) return false;
+    await ref.set({ editorTokens: firebase.firestore.FieldValue.arrayUnion(token) }, { merge: true });
+    return true;
+  }
+
   async function saveCatalogWeeks(catalogCode, weeks) {
     const okAuth = await ready;
     if (!okAuth || !db) throw new Error("Sync not available");
@@ -366,6 +411,19 @@ const Sync = (function () {
     if (!col || !(await ready)) return [];
     const snap = await col.get();
     return snap.docs.map((d) => d.data());
+  }
+
+  // C3: the catalog editor's only edit path used to be "re-paste the whole
+  // grade" — no way to remove a week that's wrong or no longer wanted.
+  // NOTE: docs/firestore.rules currently blocks delete on catalogs/*/weeks/*
+  // (`allow delete: if false`) and, per that file's own header, is not yet
+  // applied to the live project anyway — but if it ever is applied as
+  // written, this call fails. See the updated comment in that file.
+  async function deleteCatalogWeek(catalogCode, weekId) {
+    const col = catalogWeeksRef(catalogCode);
+    if (!col || !(await ready)) return false;
+    await col.doc(weekId).delete();
+    return true;
   }
 
   // Firestore's .set()/.update() throw SYNCHRONOUSLY on any field whose value
@@ -426,10 +484,12 @@ const Sync = (function () {
     return p ? p.collection("progress").doc(weekId) : null;
   }
 
+  // Returns the write promise (settled, never rejected — see pushProfile's
+  // matching comment) for the same B6 tracking reason.
   async function pushProgress(profileId, weekId, progressDoc) {
     const ref = progressRef(profileId, weekId);
     if (!ref || !(await ready)) return;
-    ref.set(stripUndefined(progressDoc), { merge: true }).catch(warnWriteFailed("progress " + weekId));
+    return ref.set(stripUndefined(progressDoc), { merge: true }).catch(warnWriteFailed("progress " + weekId));
   }
 
   async function fetchProgress(profileId, weekId) {
@@ -508,10 +568,11 @@ const Sync = (function () {
     return p ? p.collection("activity").doc(date) : null;
   }
 
+  // Returns the write promise for the same B6 tracking reason as pushProfile.
   async function pushActivity(profileId, date, activityDoc) {
     const ref = activityRef(profileId, date);
     if (!ref || !(await ready)) return;
-    ref.set(stripUndefined(activityDoc), { merge: true }).catch(warnWriteFailed("activity " + date));
+    return ref.set(stripUndefined(activityDoc), { merge: true }).catch(warnWriteFailed("activity " + date));
   }
 
   async function fetchActivityRange(profileId, dateStrings) {
@@ -539,8 +600,10 @@ const Sync = (function () {
     fetchShopConfig,
     ensureOwnerToken,
     fetchCatalogMeta,
+    addCatalogEditor,
     saveCatalogWeeks,
     fetchCatalogWeeks,
+    deleteCatalogWeek,
     pushProgress,
     fetchProgress,
     fetchAllProgress,
