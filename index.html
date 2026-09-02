@@ -215,7 +215,12 @@
       <button id="btn-starter-lists-from-catalog" class="btn btn-secondary">⚡ Or load a ready-made starter list</button>
       <p class="hint catalog-readonly-note hidden" id="catalog-readonly-note"></p>
       <div id="catalog-editor-form">
-        <input type="file" id="catalog-scan-input" accept="image/*" capture="environment" class="hidden">
+        <!-- No `capture` attribute: that forces straight-to-camera on iOS with
+             no way to pick an existing photo. OCR runs entirely client-side
+             regardless of source, so a gallery photo is exactly as private as
+             a fresh one — omitting `capture` just lets the browser show its
+             normal Camera-or-Photo-Library picker instead. -->
+        <input type="file" id="catalog-scan-input" accept="image/*" class="hidden">
         <button id="btn-catalog-scan" type="button" class="btn btn-ghost">📷 Scan a Photo</button>
         <p class="hint" id="catalog-scan-status"></p>
         <p class="hint">Scans a photo of a word list and fills the box below with what it reads — check it over before saving, OCR isn't perfect and a bad scan can be edited by hand just like a paste.</p>
