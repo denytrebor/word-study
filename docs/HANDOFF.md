@@ -1505,3 +1505,51 @@ against. What it does buy is signal density: junk drops from ~127 lines to
 asking anyone to draw a box. So a crop UI is a nice-to-have for pages the
 parser cannot handle, not the fix for this one. Do not build it expecting
 better recognition.
+
+## Split-word rejoining, and the limits of the two-photo advice (2026-09-02)
+
+Two parser bugs surfaced from a real run. OCR sometimes splits a long word
+across a space ("archi pelago-a group of many islands"); taking the first
+token truncated it to "archi". And a multi-word entry ("1 and 2 Samuel",
+which this curriculum genuinely has) collapsed to "1".
+
+Fixed in `collectNumbered`: strip the definition at the dash or ", ", then
+rejoin a two-token head only when BOTH halves are <=6 characters and the
+second starts lowercase. The both-short rule matters - a first attempt keyed
+only on the leading token turned "Orrid extremely" into "Orridextreme",
+which is worse than leaving it. The tail of a split word is a fragment; a
+long second token is a separate word. A head of 3-4 tokens is kept whole
+when every token is clean, and falls back to the first token when any looks
+like debris ("brillian 111 lliantly").
+
+`mergeNumbered` also now prefers the longer reading when one pass's word is
+a prefix of the other's, and does not flag that as a disagreement - a
+truncation is not a conflict.
+
+Unit-tested in `parsertest.js` against real OCR lines: archipelago rejoined,
+delta and isthmus stripped of their definitions, "1 and 2 Samuel" preserved,
+"brillian 111 lliantly" trimmed to its first token. End-to-end unchanged at
+24/27 correct, with archipelago fixed.
+
+### The two-photo advice was given before it was tested, and the test failed
+
+Earlier entries recommend photographing the page in two halves. An attempt to
+measure it: crop to each half and upscale 1.7x, then OCR. Result was 26/33
+combined - WORSE than 29/33 for the single full-page photo.
+
+**That test does not settle the question, because it cannot.** Upscaling a
+crop adds no information; a real second photo taken closer puts genuinely
+more sensor pixels on each letter, which is the whole point. The simulation
+can only ever reproduce the original detail, so it can neither confirm nor
+refute the advice. Recorded so nobody reads 26/33 as evidence against
+two-photo capture - and so nobody repeats the simulation expecting an answer.
+The advice remains physically plausible and unverified.
+
+### Where the remaining errors actually live
+
+All three surviving errors on the test photo - "Orrid" (33. torrid, whose
+marker lost a digit and displaced slot 3), "isthmyg" (30. isthmus), "trib"
+(34. tributary) - are in the curled bottom third of the page. They are
+recognition failures, not parsing failures, and page flatness is the lever.
+Tesseract will not reach 100% on a photo of a curved page; that ceiling is
+what the vision-model option in the earlier entry buys.

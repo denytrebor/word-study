@@ -2727,7 +2727,32 @@
       if (!m) return;
       const n = markerToNumber(m[1]);
       if (n === null) return;
-      const word = m[2].trim().split(/[\s—–-]+/)[0].replace(/[^A-Za-z'’-]/g, "");
+      // A vocabulary entry is "word—definition", so the word is everything
+      // before the dash. OCR sometimes splits a long word across a space
+      // ("archi pelago—a group of many islands"), which taking the first
+      // token alone truncated to "archi". Re-join a short leading fragment
+      // with a lowercase continuation; a genuinely multi-word entry keeps
+      // its space because the first part won't be a short fragment.
+      let head = m[2].split(/[—–]|,\s|\s-\s/)[0].trim();
+      const parts = head.split(/\s+/).filter(Boolean);
+      let word;
+      if (parts.length === 2 && parts[0].length <= 6 && parts[1].length <= 6 && /^[a-z]/.test(parts[1])) {
+        // "archi pelago" -> archipelago. Both halves must be short: the tail
+        // of a split word is a fragment, so a long second token ("Orrid
+        // extremely") is a separate word and joining it makes things worse.
+        word = parts.join("");
+      } else if (parts.length === 1) {
+        word = parts[0];
+      } else {
+        // Several tokens: either a real multi-word entry ("1 and 2 Samuel",
+        // which this curriculum genuinely has) or OCR debris trailing the
+        // word ("brillian 111 lliantly"). Keep it whole only if every token
+        // is clean; otherwise fall back to the first token.
+        const clean = parts.every((p) => /^[A-Za-z'’-]+$/.test(p) || /^\d{1,2}$/.test(p))
+          && !parts.some((p) => /(.)\1\1/.test(p));
+        word = clean && parts.length <= 4 ? parts.join(" ") : parts[0];
+      }
+      word = word.replace(/[^A-Za-z0-9'’ -]/g, "").trim();
       if (word) found.push({ n, word, line: i });
     });
     return found;
@@ -2769,7 +2794,17 @@
       const a = primary.get(n), b = secondary.get(n);
       let word = a || b;
       const disagree = a && b && a.toLowerCase() !== b.toLowerCase();
-      if (disagree && looksLikeWord(b) && !looksLikeWord(a)) word = b;
+      if (disagree) {
+        const la = a.toLowerCase(), lb = b.toLowerCase();
+        // One pass truncating a word the other read in full is the common
+        // disagreement (archi / archipelago), and it isn't really a conflict
+        // — take the longer reading and don't flag it.
+        if (lb.startsWith(la) || la.startsWith(lb)) {
+          word = a.length >= b.length ? a : b;
+          return { n, word, uncertain: !looksLikeWord(word) };
+        }
+        if (looksLikeWord(b) && !looksLikeWord(a)) word = b;
+      }
       return { n, word, uncertain: Boolean(disagree) || !looksLikeWord(word) };
     });
   }
