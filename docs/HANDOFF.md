@@ -1310,3 +1310,53 @@ confetti comment (which was about not needing one for a simple canvas
 effect, not a hard rule) — the app already loads Firebase from
 `gstatic.com`, so this isn't a new category of dependency, just one more
 pinned CDN script.
+
+## OCR auto-rotation: the scan feature was untestable on real photos (2026-09-02)
+
+**The bug.** The first real-world use of "📷 Scan a Photo" returned pure
+noise — pages of `L = y CY - 8 = Pr hk`. Not a bad scan; no recoverable
+words at all. The photo was a workbook page shot with a phone held
+sideways, which is how anyone holding a book in one hand takes the shot.
+
+**Root cause.** Tesseract only reads text running left-to-right. It has no
+built-in orientation detection in the LSTM-only build tesseract.js 5 ships,
+so a page rotated 90° isn't read badly — it isn't read at all. EXIF does
+not rescue this: EXIF records how the *phone* was held, not how the *page*
+sat under it. The test photo carried EXIF orientation 3 (180°), and even
+after honoring that tag the page still needed a further 270° turn.
+
+The previous entry above states this was "verified live end-to-end… with
+100% extraction accuracy" — against a *generated* upright PNG. That test
+could never have caught this, and its passing gave false confidence in a
+feature that failed on the first real input. **A camera feature has to be
+tested against a real camera photo, EXIF and all.**
+
+**The fix** (`js/app.js`): decode with EXIF applied
+(`createImageBitmap(file, {imageOrientation:"from-image"})`, `<img>`
+fallback), OCR a 1000px copy at all four right-angle rotations, keep the
+highest-confidence angle, then re-read at full resolution through one
+reused worker (`Tesseract.recognize()` builds and tears down a worker per
+call — five of those would dominate the runtime).
+
+**Measurements**, taken on the actual failing photo (4032×3024), first in
+Node and then re-confirmed in Chrome against the shipped code paths:
+
+| | result |
+|---|---|
+| probe confidence, correct angle vs. other three | 48 vs 26–30 (unambiguous) |
+| target words recovered, before → after | ~0/33 → 22/33 |
+| full-res vs. 2400px final pass | 26/33 vs 20/33 |
+| grayscale + autocontrast | 22/33 (worse — dropped) |
+| runtime, desktop Chrome | 4.4s probe + 3.4s final |
+
+Two counter-intuitive results worth keeping: **don't downscale the final
+pass** (accuracy tracks resolution, and confidence does *not* — it moved
+only 61→64 across a drop that cost six words, so confidence is a good
+orientation comparator and a bad accuracy gauge), and **don't preprocess**
+— grayscale/autocontrast scored worse than the untouched photo.
+
+**Still imperfect, by nature.** The bottom third of the test page is
+warped by page curl and camera angle and reads poorly at any rotation
+(`tropics` → `Quatoy`). Rotation fixes orientation, not perspective. The
+review-before-save step therefore stays mandatory, and the hint text now
+says a flat, straight-on shot reads best.

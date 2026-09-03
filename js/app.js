@@ -2567,6 +2567,77 @@
     }
     document.getElementById("catalog-scan-input").click();
   });
+
+  // Decode to a bitmap with EXIF orientation already applied. Phone cameras
+  // record "which way was the phone held" as an EXIF tag rather than rotating
+  // the pixels, so the stored pixels are often sideways or upside down versus
+  // what the person saw in their gallery. `from-image` is the spec default in
+  // current browsers, but older WebKit defaulted to `none` and shipped the raw
+  // pixels — asking explicitly costs nothing and removes the guesswork.
+  async function decodeOriented(file) {
+    if (typeof createImageBitmap === "function") {
+      try { return await createImageBitmap(file, { imageOrientation: "from-image" }); }
+      catch (e) { /* fall through to the <img> path */ }
+    }
+    const url = URL.createObjectURL(file);
+    try {
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("decode failed"));
+        img.src = url;
+      });
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  // Draw `src` rotated clockwise by `deg` (0/90/180/270), optionally scaled so
+  // its long side is at most `maxSide`.
+  function rotatedCanvas(src, deg, maxSide) {
+    const sw = src.width, sh = src.height;
+    const scale = maxSide ? Math.min(1, maxSide / Math.max(sw, sh)) : 1;
+    const w = Math.round(sw * scale), h = Math.round(sh * scale);
+    const swap = deg === 90 || deg === 270;
+    const canvas = document.createElement("canvas");
+    canvas.width = swap ? h : w;
+    canvas.height = swap ? w : h;
+    const ctx = canvas.getContext("2d");
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(deg * Math.PI / 180);
+    ctx.drawImage(src, -w / 2, -h / 2, w, h);
+    return canvas;
+  }
+
+  // Tesseract only reads text that runs left-to-right, so a page photographed
+  // sideways comes back as pure noise rather than as a bad-but-fixable scan —
+  // and a workbook held in one hand gets photographed sideways constantly.
+  // EXIF alone doesn't save us: it records how the phone was held, not how the
+  // page was oriented under it.
+  //
+  // So: OCR a small copy at all four right-angle rotations and keep the one
+  // Tesseract is most confident about. On the test page (a sideways Abeka
+  // spelling list) the upright rotation scored 48 against 26-30 for the other
+  // three — the margin is wide because wrong-way text doesn't resolve into
+  // words at all. Probing at 1000px keeps all four passes to a few seconds;
+  // the real pass then re-reads at full resolution, which measurably matters:
+  // the same photo yielded 26 of 33 target words at native size but only 20 at
+  // 2400px. Confidence is a fine orientation *comparator* and a poor accuracy
+  // gauge — it barely moved (61 vs 64) across that same drop. Grayscale and
+  // autocontrast passes also scored worse (22/33), so the photo goes to
+  // Tesseract untouched apart from the rotation.
+  const OCR_PROBE_SIDE = 1000;
+  const OCR_MAX_SIDE = 4500; // only to bound canvas memory on huge images
+
+  async function scanForOrientation(worker, bitmap, status) {
+    const angles = [0, 90, 180, 270];
+    let best = { deg: 0, confidence: -1 };
+    for (let i = 0; i < angles.length; i++) {
+      status.textContent = `Checking which way up… ${i + 1} of ${angles.length}`;
+      const { data } = await worker.recognize(rotatedCanvas(bitmap, angles[i], OCR_PROBE_SIDE));
+      if (data.confidence > best.confidence) best = { deg: angles[i], confidence: data.confidence };
+    }
+    return best.deg;
+  }
+
   document.getElementById("catalog-scan-input").addEventListener("change", async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = ""; // lets picking the SAME file again re-fire change
@@ -2575,15 +2646,29 @@
     const scanBtn = document.getElementById("btn-catalog-scan");
     scanBtn.disabled = true;
     status.textContent = "Scanning… (this can take a bit on a big photo)";
+    let worker = null;
     try {
-      const result = await Tesseract.recognize(file, "eng", {
+      const bitmap = await decodeOriented(file);
+      // One worker for all five passes: Tesseract.recognize() spins up and
+      // tears down a worker per call, which would dominate the runtime here.
+      // The percentage is only shown for the final full-resolution pass — the
+      // four probes have their own "1 of 4" counter, and letting the logger
+      // overwrite that with a percentage that restarts four times would read
+      // like the scan was stuck in a loop.
+      let showProgress = false;
+      worker = await Tesseract.createWorker("eng", 1, {
         logger: (m) => {
-          if (m.status === "recognizing text" && typeof m.progress === "number") {
-            status.textContent = `Scanning… ${Math.round(m.progress * 100)}%`;
+          if (showProgress && m.status === "recognizing text" && typeof m.progress === "number") {
+            status.textContent = `Reading the words… ${Math.round(m.progress * 100)}%`;
           }
         },
       });
-      const text = (result && result.data && result.data.text || "").trim();
+      const deg = await scanForOrientation(worker, bitmap, status);
+      showProgress = true;
+      status.textContent = "Reading the words…";
+      const { data } = await worker.recognize(rotatedCanvas(bitmap, deg, OCR_MAX_SIDE));
+      if (bitmap.close) bitmap.close();
+      const text = (data && data.text || "").trim();
       if (!text) {
         status.textContent = "Couldn't read any text in that photo — try a clearer, brighter shot, or paste by hand.";
         return;
@@ -2595,6 +2680,9 @@
     } catch (err) {
       status.textContent = "Scan failed — try again, or paste the words by hand below.";
     } finally {
+      // Workers hold a WASM heap and their own thread; leaking one per scan
+      // would pile up across repeated imports on a phone.
+      if (worker) { try { await worker.terminate(); } catch (e) { /* already gone */ } }
       scanBtn.disabled = false;
     }
   });
