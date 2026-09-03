@@ -2659,6 +2659,23 @@
   const OCR_PROBE_SIDE = 1000;
   const OCR_MAX_SIDE = 4500; // only to bound canvas memory on huge images
 
+  // Page segmentation mode 11, "sparse text": find words anywhere, without
+  // assuming the page is flowing paragraphs. Tesseract's default (mode 3,
+  // fully automatic) tries to model the page as prose and does badly on a
+  // workbook page, which is short numbered entries in three columns wrapped
+  // around illustrations — it merges across the column gutters and drops
+  // whole entries. On the test page this one parameter took word recovery
+  // from 23/33 to 29/33 at the same speed.
+  //
+  // It also makes the orientation probe more decisive: the upright rotation
+  // scores 60 against 29-34, where mode 3's confidences were close enough to
+  // pick the wrong way up. So both passes use it.
+  //
+  // Things measured and rejected, so they don't get retried: upscaling 1.5x
+  // (27/33) and Sauvola adaptive thresholding (27/33) both scored WORSE than
+  // the untouched photo, as did plain grayscale + autocontrast (22/33).
+  const OCR_PAGE_MODE = "11";
+
   async function scanForOrientation(worker, bitmap, status) {
     const angles = [0, 90, 180, 270];
     let best = { deg: 0, confidence: -1 };
@@ -2695,6 +2712,7 @@
           }
         },
       });
+      await worker.setParameters({ tessedit_pageseg_mode: OCR_PAGE_MODE });
       const deg = await scanForOrientation(worker, bitmap, status);
       showProgress = true;
       status.textContent = "Reading the words…";

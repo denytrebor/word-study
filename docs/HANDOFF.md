@@ -1397,3 +1397,54 @@ Also worth recording, since it narrows future OCR debugging: tesseract.js *does*
 honor EXIF when handed a `File` directly. An upright-displaying photo with
 sideways stored pixels scored 24/33 words on the OLD code. So EXIF was never the
 bug — page orientation within the frame was.
+
+## The one parameter that fixed the scan: PSM 11 (2026-09-02)
+
+Asked whether the numbered words could be pulled out and spell-checked, then
+whether anything short of an LLM would help. Measuring beat both guesses: the
+fix was a single Tesseract parameter, not a parser and not a vision model.
+
+Tesseract defaults to page segmentation mode 3, "fully automatic", which models
+the page as flowing prose. A workbook page is not prose - it is short numbered
+entries in three columns wrapped around illustrations - so mode 3 merged text
+across the column gutters (`1. submarine illiantly`) and dropped whole entries.
+**Mode 11, "sparse text", finds words anywhere without assuming paragraphs.**
+
+Measured on the failing photo against the page's 33 known words:
+
+| variant | words |
+|---|---|
+| psm 3 (the shipped default) | 23/33 |
+| psm 4 (single column) | 22/33 |
+| psm 6 (uniform block) | 26/33 |
+| **psm 11 (sparse text)** | **29/33** |
+| psm 11 + 1.5x upscale | 27/33 |
+| psm 11 + Sauvola adaptive threshold | 27/33 |
+
+Same runtime. In-browser end-to-end the number is 27/33 (browser JPEG decode and
+canvas resampling differ slightly from PIL's), up from 22/33 before. Mode 11 also
+made the orientation probe *more* decisive - upright scored 60 against 29-34,
+where an explicit mode 3 probe picked the wrong way up in one run - so both the
+probe and the final pass use it.
+
+Rejected by measurement, recorded so they don't get retried: 1.5x upscaling,
+Sauvola adaptive thresholding, and grayscale + autocontrast (22/33) all scored
+worse than the untouched photo. Preprocessing is not the lever here.
+
+### A parser was the wrong instinct
+
+Before finding this, a geometric extractor was prototyped: take each `N.` marker
+from the word-level bounding boxes, grab the words to its right up to the column
+gutter, cluster into columns, keep the longest increasing run. It reached 20/35 -
+below the 24/35 ceiling set by how many words Tesseract read at all. The lesson:
+**when extraction is lossy, fix the recognizer before writing a parser for its
+output.** Mode 11 also emits one entry per line, which is what the parser was
+being built to reconstruct, so the parser became unnecessary.
+
+Spell-check was also considered and rejected on the merits: it cannot recover a
+word the OCR never saw, and it is actively unsafe for a spelling app. The real
+misread was `daily` -> `dally`, and `dally` is a real English word - a spell
+checker passes it silently, converting an honest gap into a confident wrong word
+taught to a child. `subtrahend` is the mirror risk: real but rare, so a
+dictionary may "correct" it to something wrong. Flag low confidence; never
+auto-correct a spelling list.
