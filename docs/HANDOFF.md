@@ -1553,3 +1553,76 @@ marker lost a digit and displaced slot 3), "isthmyg" (30. isthmus), "trib"
 recognition failures, not parsing failures, and page flatness is the lever.
 Tesseract will not reach 100% on a photo of a curved page; that ceiling is
 what the vision-model option in the earlier entry buys.
+
+## Bible verse memorisation, with the KJV bundled (2026-09-02)
+
+Kids get a weekly verse alongside their spelling words and must recite it
+verbatim in class. Added as a first-class part of a week rather than a
+separate app: `week.verse = { ref, text, verses[] }`, so it rides the existing
+Firestore sync, catalog sharing and week-picker for free. A school sharing a
+catalog code shares the verses with it.
+
+### Why the whole Bible is in the repo
+
+`data/kjv/` holds all 66 books as JSON (5.0MB raw, ~1.3MB gzipped; verified
+complete at exactly 31,102 verses, the canonical count). **This is only
+possible because the translation is the KJV, which is public domain** - NIV,
+ESV and the rest are copyrighted and could not be bundled. If anyone ever asks
+to switch translations, that is a licensing question first and a code question
+second.
+
+**References resolve on the teacher's device, at catalog-save time, and the
+resulting TEXT is stored on the week.** That single decision is what keeps this
+cheap: a student device never fetches anything from `data/kjv/`, practice works
+offline, and only whoever is typing references pulls a book file (~30-90KB,
+one book at a time, cached after). It also means the wording is exactly right,
+which matters when the assignment is reciting verbatim - hand-typed verses
+would introduce precisely the errors the kid gets marked down for.
+
+Consequently `data/kjv/` is deliberately **excluded from the service worker
+precache** while `js/kjv.js` is included. Precaching the books would roughly
+triple the PWA install for files most devices never touch. The runtime
+network-first handler still caches any book that does get fetched.
+
+### Import
+
+A `VERSE` directive inside a week block, alongside the existing `WEEK N`:
+
+    GRADE 5 (starts 2026-09-01)
+    VERSE Prov 3:5-6
+
+    necessary
+    calendar
+
+Reference-only pulls the KJV text; `VERSE John 3:16 | For God so loved...`
+supplies text explicitly, which is the escape hatch for a non-KJV translation.
+
+Reference parsing (`js/kjv.js`) handles ranges, whole chapters, numbered books
+("1 John", "I John", "First John"), en dashes, and abbreviations - the latter
+matter because this curriculum prints "Prov." and "Eccles." on the page.
+Ambiguous prefixes deliberately fail rather than guess a book wrong. 15/15
+reference forms resolve and 6/6 malformed inputs are rejected in
+`kjvtest.js`.
+
+### Practice: three stages, no mic yet
+
+Memorising verbatim text is a different skill from spelling, so it gets its
+own screen rather than being forced into the spelling loop. Support is removed
+progressively: **Read** (full text + existing `speak()`), **Fill Gaps**
+(25/50/75% of words blanked, tap any blank to reveal), **First Letters**
+(`T____ i_ t__ L___`). Blank positions are seeded deterministically per
+piece+level so they do not reshuffle on every repaint - a moving target is
+unlearnable.
+
+A passage is stepped through one verse at a time (Romans 3:2-10 is 184 words;
+facing that as one block of blanks would just discourage a kid).
+
+**Stage 4, reciting into the mic, is deliberately not built yet.** The app
+already has `SpeechRecognition` wired for spelling dictation, so the plumbing
+exists - but in Chrome it streams audio to Google servers, and this app
+otherwise processes everything on-device. Turning kids reciting aloud into the
+primary interaction is a privacy decision the user wanted to take separately.
+When it is built: match on normalised words only (speech recognition returns
+no punctuation), expect KJV wording - "thou", "hast", "begotten" - to defeat
+the recogniser regularly, and ship an "I said it right" self-grade escape
+hatch or the feature will punish kids for the software's failure.

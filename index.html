@@ -334,6 +334,11 @@
           <span class="menu-icon">🔤</span>
           <span>Word Scramble</span>
         </button>
+        <button class="menu-card" data-nav="verse" id="menu-card-verse">
+          <span class="menu-icon">📜</span>
+          <span>Verse Practice</span>
+          <span class="menu-card-sub" id="verse-card-sub"></span>
+        </button>
         <button class="menu-card menu-card-review" data-nav="review">
           <span class="menu-icon">🧠</span>
           <span>Smart Review</span>
@@ -362,6 +367,39 @@
     </section>
 
     <!-- SCREEN: Flashcard (Look & Say) -->
+    <!-- SCREEN: Verse practice. Three stages of progressively less support,
+         which is how memorising verbatim text actually works: read it, then
+         recall it with gaps, then recall it from first letters alone. A long
+         passage (Romans 3:2-10 is 184 words) is stepped through one verse at
+         a time so a kid is never facing a wall of blanks. -->
+    <section id="screen-verse" class="screen">
+      <div class="session-topbar">
+        <span id="verse-ref">John 3:16</span>
+        <span id="verse-piece-progress"></span>
+      </div>
+      <div class="verse-stage-picker" role="tablist" aria-label="Practice stage">
+        <button class="verse-stage-btn" data-stage="read" role="tab">📖 Read</button>
+        <button class="verse-stage-btn" data-stage="fade" role="tab">🫥 Fill Gaps</button>
+        <button class="verse-stage-btn" data-stage="first" role="tab">🔤 First Letters</button>
+      </div>
+      <p class="hint" id="verse-stage-hint"></p>
+      <div class="verse-fade-levels hidden" id="verse-fade-levels">
+        <button class="btn btn-secondary verse-level-btn" data-level="25">25%</button>
+        <button class="btn btn-secondary verse-level-btn" data-level="50">50%</button>
+        <button class="btn btn-secondary verse-level-btn" data-level="75">75%</button>
+      </div>
+      <div class="verse-body" id="verse-body" aria-live="polite"></div>
+      <div class="session-nav">
+        <button id="verse-hear" class="btn btn-round">🔊 Hear It</button>
+        <button id="verse-reveal" class="btn btn-secondary">👀 Show All</button>
+      </div>
+      <div class="session-nav">
+        <button id="verse-prev" class="btn btn-secondary">← Prev</button>
+        <button id="verse-next" class="btn btn-primary">Next →</button>
+      </div>
+      <button id="verse-exit" class="btn btn-ghost">Exit</button>
+    </section>
+
     <section id="screen-flashcard" class="screen">
       <div class="session-topbar">
         <span id="flash-progress">Card 1 of 1</span>
@@ -700,6 +738,7 @@
 <script src="js/sync.js"></script>
 <script src="js/shop-catalog.js"></script>
 <script src="js/starter-lists.js"></script>
+<script src="js/kjv.js"></script>
 <script src="js/vendor/qrcode.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script src="js/app.js"></script>

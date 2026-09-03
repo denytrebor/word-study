@@ -1215,3 +1215,67 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 /* Mechanic 6 ("Gold the List") — mirrors the week-progress bar the backlog
    fork added, so the two read as one family on Home. */
 .gold-ring-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 14px; font-weight: 700; color: var(--warn, #d97706); }
+
+/* VERSE PRACTICE — three stages of progressively less support. The verse text
+   is deliberately large and loosely leaded: a kid reads it aloud repeatedly,
+   and blanks/first-letter cues have to be scannable at a glance. */
+.verse-stage-picker {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.verse-stage-btn {
+  flex: 1 1 auto;
+  min-height: 44px; /* touch target, matching the app's other controls */
+  padding: 10px 14px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.verse-stage-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.verse-fade-levels {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.verse-fade-levels.hidden { display: none; }
+.verse-level-btn { flex: 1; min-height: 44px; padding: 8px 0; }
+.verse-level-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.verse-body {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px;
+  margin-bottom: 16px;
+  font-size: 1.35rem;
+  line-height: 2.1;   /* room for the underscore runs to breathe */
+  word-break: break-word;
+}
+.verse-word { white-space: nowrap; }
+/* Blanks and cues are tappable to reveal, so they read as interactive. */
+.verse-word-blank,
+.verse-word-cue {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 0 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
+.verse-word-blank { background: #eef2ff; color: var(--primary); }
+.verse-word-cue { color: var(--primary); }
+.verse-word-blank:hover,
+.verse-word-cue:hover { background: var(--accent); color: #fff; }

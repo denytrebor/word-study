@@ -2140,7 +2140,23 @@
       words: rawWords
         .filter((w) => w && typeof w === "object" && typeof w.id === "string" && w.id && typeof w.text === "string" && w.text)
         .map((w) => ({ id: w.id, text: w.text, definition: typeof w.definition === "string" ? w.definition : "" })),
+      verse: sanitizeVerse(week.verse),
     };
+  }
+
+  // Same hardening posture as words: a shared catalog is writable by every
+  // class it's shared with, so cap the sizes rather than trust the document.
+  function sanitizeVerse(v) {
+    if (!v || typeof v !== "object") return null;
+    const ref = typeof v.ref === "string" ? v.ref.slice(0, 120) : "";
+    const text = typeof v.text === "string" ? v.text.slice(0, 4000) : "";
+    if (!ref && !text) return null;
+    const verses = Array.isArray(v.verses)
+      ? v.verses.slice(0, 200)
+          .filter((x) => x && typeof x.text === "string")
+          .map((x) => ({ verse: Number(x.verse) || 0, text: x.text.slice(0, 1000) }))
+      : [];
+    return verses.length ? { ref, text, verses } : { ref, text };
   }
 
   function sanitizeWeeks(list) {
@@ -2188,6 +2204,9 @@
       progress.label = week.label;
       progress.grade = week.grade;
     }
+    // The verse text travels with the week, so a student's device practises
+    // offline and never fetches anything from data/kjv/.
+    progress.verse = week.verse || null;
     saveProgressLocal(profileId, week.id, progress);
     return progress;
   }
@@ -2329,6 +2348,9 @@
     // with no WEEK markers at all keeps behaving exactly as before.
     let explicitWeekNum = null;
     let block = [];
+    // Set by a VERSE line and consumed by the next flushed week, so the
+    // directive reads naturally above the words it belongs with.
+    let pendingVerse = null;
 
     function flushBlock() {
       if (block.length === 0) return;
@@ -2352,15 +2374,18 @@
         const start = new Date(currentStart + "T00:00:00");
         start.setDate(start.getDate() + (useWeekNum - 1) * 7);
         const dateStr = dateToLocalStr(start);
-        weeks.push({
+        const week = {
           id: `${slugify(currentGrade)}-w${useWeekNum}`,
           grade: currentGrade,
           weekNumber: useWeekNum,
           weekStartDate: dateStr,
           label: `Grade ${currentGrade} · Week ${useWeekNum}`,
           words,
-        });
+        };
+        if (pendingVerse && pendingVerse.ref) week.verse = pendingVerse;
+        weeks.push(week);
       }
+      pendingVerse = null;
       block = [];
     }
 
@@ -2379,6 +2404,16 @@
       if (weekMatch) {
         flushBlock(); // in case words were already piling up with no blank line before this marker
         explicitWeekNum = parseInt(weekMatch[1], 10);
+        return;
+      }
+      // VERSE John 3:16                  — reference only, text filled in from
+      //                                    the bundled KJV when the catalog saves
+      // VERSE John 3:16 | For God so...  — explicit text wins, for a
+      //                                    translation other than KJV
+      const verseMatch = line.match(/^verse\s+(.+)$/i);
+      if (verseMatch) {
+        const [ref, ...rest] = verseMatch[1].split("|");
+        pendingVerse = { ref: ref.trim().slice(0, 120), text: rest.join("|").trim().slice(0, 4000) };
         return;
       }
       if (!line) { flushBlock(); return; }
@@ -2928,11 +2963,36 @@
     document.getElementById("btn-save-catalog").classList.remove("hidden");
   });
 
+  // "VERSE Romans 3:2-10" with no text gets its words from the bundled KJV.
+  // Resolving here — once, on the teacher's device, at save time — is what
+  // keeps students' devices from ever touching data/kjv/: the text is stored
+  // on the week and syncs like everything else. It also means the wording is
+  // exactly right, which matters when the whole assignment is reciting it
+  // verbatim. A reference that can't be resolved keeps its ref and is
+  // reported, rather than failing the save of a whole year's words.
+  async function fillVerseTextFromKJV(weeks) {
+    if (typeof KJV === "undefined") return;
+    const failed = [];
+    for (const w of weeks) {
+      if (!w.verse || !w.verse.ref || w.verse.text) continue;
+      try {
+        const found = await KJV.lookup(w.verse.ref);
+        w.verse.ref = found.ref;
+        w.verse.text = found.text;
+        w.verse.verses = found.verses;
+      } catch (e) {
+        failed.push(w.verse.ref);
+      }
+    }
+    if (failed.length) toast(`Couldn't find ${failed.join(", ")} — check the reference, or add the text after a | on the VERSE line.`);
+  }
+
   document.getElementById("btn-save-catalog").addEventListener("click", async () => {
     const code = getCatalogCode();
     const btn = document.getElementById("btn-save-catalog");
     btn.disabled = true;
     try {
+      await fillVerseTextFromKJV(catalogParsePreview);
       if (firestoreReady()) await Sync.saveCatalogWeeks(code, catalogParsePreview);
       const key = catalogWeeksKey(code);
       // sanitizeWeeks() here is belt-and-suspenders, not a fix for a known
@@ -3477,8 +3537,139 @@
   // Factored out of the tile grid's own click handler so the Home "start
   // here" recommendation (below) can send a kid into the same modes through
   // the same gate, instead of duplicating the word-list-required check.
+  // ---- Verse practice --------------------------------------------------
+  //
+  // Memorising verbatim text is a different skill from spelling a word, so it
+  // gets its own loop rather than being squeezed into the spelling screens.
+  // The three stages remove support progressively — read it, recall it with
+  // gaps, recall it from first letters — which is the standard and effective
+  // ladder for this. A long passage is stepped through one verse at a time:
+  // Romans 3:2-10 is 184 words, and facing that as one block of blanks would
+  // just be discouraging.
+  const verse = { pieces: [], index: 0, stage: "read", level: 25, hidden: new Set() };
+
+  function currentVerse() {
+    const w = state.progress && state.progress.verse;
+    return (w && w.text) ? w : null;
+  }
+
+  // Split a passage into its verses when we stored them, else treat the whole
+  // thing as one piece.
+  function versePieces(v) {
+    if (Array.isArray(v.verses) && v.verses.length) {
+      return v.verses.map((x) => ({ label: `v${x.verse}`, text: x.text }));
+    }
+    return [{ label: "", text: v.text }];
+  }
+
+  // Which word positions to blank. Deterministic per (piece, level) so the
+  // gaps don't reshuffle under the kid every time the screen redraws — a
+  // moving target is unlearnable.
+  function blankedPositions(text, level, seed) {
+    const n = text.split(/\s+/).filter(Boolean).length;
+    const want = Math.round((n * level) / 100);
+    const picked = new Set();
+    let h = seed * 2654435761 % 2147483647;
+    while (picked.size < want && picked.size < n) {
+      h = (h * 48271) % 2147483647;
+      picked.add(h % n);
+    }
+    return picked;
+  }
+
+  function renderVerse() {
+    const body = document.getElementById("verse-body");
+    const piece = verse.pieces[verse.index];
+    if (!piece) { body.textContent = ""; return; }
+    const words = piece.text.split(/\s+/).filter(Boolean);
+    body.innerHTML = "";
+    words.forEach((w, i) => {
+      const span = document.createElement("span");
+      span.className = "verse-word";
+      const key = verse.index + ":" + i;
+      if (verse.stage === "read" || verse.hidden.has(key)) {
+        span.textContent = w;
+      } else if (verse.stage === "first") {
+        // Keep leading/trailing punctuation visible — it's a cue, not a word.
+        const m = w.match(/^([^A-Za-z]*)([A-Za-z])([A-Za-z'’-]*)(.*)$/);
+        span.textContent = m ? m[1] + m[2] + "_".repeat(m[3].length) + m[4] : w;
+        span.classList.add("verse-word-cue");
+        span.title = "Tap to reveal";
+      } else {
+        const blanks = blankedPositions(piece.text, verse.level, verse.index + 1);
+        if (blanks.has(i)) {
+          span.textContent = "_".repeat(Math.max(3, w.replace(/[^A-Za-z]/g, "").length));
+          span.classList.add("verse-word-blank");
+          span.title = "Tap to reveal";
+        } else {
+          span.textContent = w;
+        }
+      }
+      if (span.classList.contains("verse-word-blank") || span.classList.contains("verse-word-cue")) {
+        span.addEventListener("click", () => { verse.hidden.add(key); renderVerse(); });
+      }
+      body.appendChild(span);
+      body.appendChild(document.createTextNode(" "));
+    });
+    document.getElementById("verse-piece-progress").textContent =
+      verse.pieces.length > 1 ? `${piece.label} (${verse.index + 1} of ${verse.pieces.length})` : "";
+    document.getElementById("verse-prev").disabled = verse.index === 0;
+    document.getElementById("verse-next").disabled = verse.index >= verse.pieces.length - 1;
+    document.getElementById("verse-fade-levels").classList.toggle("hidden", verse.stage !== "fade");
+    document.querySelectorAll(".verse-stage-btn").forEach((b) =>
+      b.classList.toggle("active", b.getAttribute("data-stage") === verse.stage));
+    document.querySelectorAll(".verse-level-btn").forEach((b) =>
+      b.classList.toggle("active", Number(b.getAttribute("data-level")) === verse.level));
+    const hints = {
+      read: "Read it out loud a few times. Tap 🔊 to hear it read to you.",
+      fade: "Say the whole verse, filling in the blanks from memory. Tap a blank if you get stuck.",
+      first: "Only the first letter of each word is showing. Recite the whole thing.",
+    };
+    document.getElementById("verse-stage-hint").textContent = hints[verse.stage];
+  }
+
+  function setVerseStage(stage) {
+    verse.stage = stage;
+    verse.hidden.clear();
+    renderVerse();
+  }
+
+  function openVersePractice() {
+    const v = currentVerse();
+    if (!v) { toast("No verse set for this week yet — a parent or teacher can add one in Manage Word Catalog."); return; }
+    verse.pieces = versePieces(v);
+    verse.index = 0;
+    verse.hidden.clear();
+    document.getElementById("verse-ref").textContent = v.ref || "This week's verse";
+    setVerseStage("read");
+    showScreen("verse");
+  }
+
+  document.querySelectorAll(".verse-stage-btn").forEach((b) =>
+    b.addEventListener("click", () => setVerseStage(b.getAttribute("data-stage"))));
+  document.querySelectorAll(".verse-level-btn").forEach((b) =>
+    b.addEventListener("click", () => { verse.level = Number(b.getAttribute("data-level")); verse.hidden.clear(); renderVerse(); }));
+  document.getElementById("verse-hear").addEventListener("click", () => {
+    const piece = verse.pieces[verse.index];
+    if (piece) speak(piece.text);
+  });
+  document.getElementById("verse-reveal").addEventListener("click", () => {
+    const piece = verse.pieces[verse.index];
+    if (!piece) return;
+    piece.text.split(/\s+/).filter(Boolean).forEach((_, i) => verse.hidden.add(verse.index + ":" + i));
+    renderVerse();
+  });
+  document.getElementById("verse-prev").addEventListener("click", () => {
+    if (verse.index > 0) { verse.index--; verse.hidden.clear(); renderVerse(); }
+  });
+  document.getElementById("verse-next").addEventListener("click", () => {
+    if (verse.index < verse.pieces.length - 1) { verse.index++; verse.hidden.clear(); renderVerse(); }
+  });
+  document.getElementById("verse-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
+
   function navigateHomeTarget(target) {
-    const noWordListNeeded = target === "progress" || target === "shop" || target === "review";
+    const noWordListNeeded = target === "progress" || target === "shop" || target === "review"
+      || target === "verse";   // a week can carry a verse before it has words
     if (!noWordListNeeded && (!state.progress || state.progress.words.length === 0)) {
       toast("Add some words first — try a starter list!");
       openStarterLists();
@@ -3491,6 +3682,7 @@
     else if (target === "test-setup") showScreen("test-setup");
     else if (target === "speed-setup") showScreen("speed-setup");
     else if (target === "scramble") openScramble();
+    else if (target === "verse") openVersePractice();
     else if (target === "review") openReview();
     else if (target === "progress") openProgress();
     else if (target === "shop") openShop();

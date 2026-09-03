@@ -1,4 +1,4 @@
-const CACHE_NAME = "word-study-v25";
+const CACHE_NAME = "word-study-v26";
 // Character avatars are precached so an equipped character still shows up
 // offline, active-in-shop or not (a kid's already-equipped avatar must keep
 // rendering even after a parent deactivates it in Manage Avatars). addAll()
@@ -30,6 +30,13 @@ const ASSETS = [
   "./js/sync.js",
   "./js/shop-catalog.js",
   "./js/starter-lists.js",
+  // js/kjv.js is the small lookup module and is precached. The 5MB of book
+  // JSON under data/kjv/ deliberately is NOT: only a teacher entering a verse
+  // reference ever fetches one, one ~60KB book at a time, and the resolved
+  // text is then stored on the week. Precaching it would roughly triple the
+  // install for a file most devices never need. The runtime handler below
+  // still caches any book that does get fetched, so it works offline after.
+  "./js/kjv.js",
   "./js/vendor/qrcode.js",
   "./js/firebase-config.js",
   "./manifest.webmanifest",
