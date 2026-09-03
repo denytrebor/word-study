@@ -1360,3 +1360,40 @@ warped by page curl and camera angle and reads poorly at any rotation
 (`tropics` → `Quatoy`). Rotation fixes orientation, not perspective. The
 review-before-save step therefore stays mandatory, and the hint text now
 says a flat, straight-on shot reads best.
+
+## Scan no longer stacks a failed scan on top of the last one (2026-09-02)
+
+Scanning always appended: `box.value + "\n\n" + text`. After a scan that read
+badly, the natural move is to retry — and the retry's text landed *underneath*
+the previous garbage. You scroll to the box, see the same gibberish on top, and
+conclude the fix didn't work. This wasted a full debugging round on exactly that
+misread, on top of the undeployed-fix problem below.
+
+Appending is still right for the real multi-page workflow (scan page 1, scan
+page 2), so this doesn't just switch to replace. Instead: when the box already
+has text, tapping Scan asks "Add to it / Replace it / Cancel" first. An empty
+box skips the prompt entirely. Replace stashes the old value and offers "Undo
+replace" in the status line, so a bad scan can't cost text it landed on.
+
+Verified in the real app (not a harness) by stubbing the file input's `click()`
+so no OS dialog blocks, then feeding generated images through the actual change
+handler: empty box → no prompt, picker opens; filled box → prompt, picker does
+NOT open; Add to it → "PREVIOUS TEXT kitten"; Replace it → "puppy" alone plus an
+Undo button; Undo → "PREVIOUS TEXT kitten" restored.
+
+### The deploy lesson
+
+The rotation fix in the previous entry was committed and reported as done, but
+never pushed. GitHub Pages kept serving the old bundle, so the user retested the
+identical bug twice and reasonably concluded the fix had failed. Confirmed by
+fetching the live file: `curl .../js/app.js | grep -c decodeOriented` returned 0.
+
+**A fix to this app is not done when it is committed — it is done when it is
+pushed, because the only place it runs is GitHub Pages.** When someone reports
+"still broken," check what is actually deployed before re-debugging the code:
+that one curl would have saved the whole round.
+
+Also worth recording, since it narrows future OCR debugging: tesseract.js *does*
+honor EXIF when handed a `File` directly. An upright-displaying photo with
+sideways stored pixels scored 24/33 words on the OLD code. So EXIF was never the
+bug — page orientation within the frame was.

@@ -2499,6 +2499,8 @@
     document.getElementById("catalog-paste-input").value = "";
     document.getElementById("catalog-preview").classList.add("hidden");
     document.getElementById("btn-save-catalog").classList.add("hidden");
+    document.getElementById("catalog-scan-merge-confirm").classList.add("hidden");
+    document.getElementById("catalog-scan-status").textContent = "";
     document.getElementById("btn-copy-catalog-link").classList.toggle("hidden", code === LOCAL_CATALOG);
     showScreen("catalog-editor");
     renderCatalogWeeksManager();
@@ -2560,12 +2562,42 @@
   // its own — a photographed workbook page (multi-word entries especially,
   // see A5's Scramble fix) won't OCR cleanly enough to trust unread, so this
   // has to stay "get text into the box," not "point phone, done."
-  document.getElementById("btn-catalog-scan").addEventListener("click", () => {
+  // "append" or "replace" — how the next scan's text joins what's in the box.
+  // Set by the merge prompt below; defaults to replace since an empty box has
+  // nothing to preserve.
+  let scanMergeMode = "replace";
+
+  function startCatalogScan() {
     if (typeof Tesseract === "undefined") {
       toast("Scan isn't available right now (needs an internet connection to load the first time) — you can still paste words by hand below.");
       return;
     }
     document.getElementById("catalog-scan-input").click();
+  }
+
+  document.getElementById("btn-catalog-scan").addEventListener("click", () => {
+    const confirmBox = document.getElementById("catalog-scan-merge-confirm");
+    if (document.getElementById("catalog-paste-input").value.trim()) {
+      document.getElementById("catalog-scan-status").textContent = "";
+      confirmBox.classList.remove("hidden");
+      return;
+    }
+    confirmBox.classList.add("hidden");
+    scanMergeMode = "replace";
+    startCatalogScan();
+  });
+  document.getElementById("btn-catalog-scan-append").addEventListener("click", () => {
+    document.getElementById("catalog-scan-merge-confirm").classList.add("hidden");
+    scanMergeMode = "append";
+    startCatalogScan();
+  });
+  document.getElementById("btn-catalog-scan-replace").addEventListener("click", () => {
+    document.getElementById("catalog-scan-merge-confirm").classList.add("hidden");
+    scanMergeMode = "replace";
+    startCatalogScan();
+  });
+  document.getElementById("btn-catalog-scan-cancel").addEventListener("click", () => {
+    document.getElementById("catalog-scan-merge-confirm").classList.add("hidden");
   });
 
   // Decode to a bitmap with EXIF orientation already applied. Phone cameras
@@ -2674,9 +2706,23 @@
         return;
       }
       const box = document.getElementById("catalog-paste-input");
-      box.value = box.value.trim() ? box.value + "\n\n" + text : text;
+      const previous = box.value;
+      box.value = (scanMergeMode === "append" && previous.trim()) ? previous + "\n\n" + text : text;
       box.scrollIntoView({ behavior: "smooth", block: "center" });
-      status.textContent = "Scanned — read it over and fix anything wrong before previewing.";
+      status.textContent = "Scanned — read it over and fix anything wrong before previewing. ";
+      // Replacing throws away whatever was in the box, so it needs a way back:
+      // a scan that reads badly shouldn't cost the text it landed on top of.
+      if (previous.trim() && box.value !== previous + "\n\n" + text) {
+        const undo = document.createElement("button");
+        undo.type = "button";
+        undo.className = "link-btn";
+        undo.textContent = "Undo replace";
+        undo.addEventListener("click", () => {
+          box.value = previous;
+          status.textContent = "Put the previous text back.";
+        });
+        status.appendChild(undo);
+      }
     } catch (err) {
       status.textContent = "Scan failed — try again, or paste the words by hand below.";
     } finally {

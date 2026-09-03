@@ -222,6 +222,19 @@
              normal Camera-or-Photo-Library picker instead. -->
         <input type="file" id="catalog-scan-input" accept="image/*" class="hidden">
         <button id="btn-catalog-scan" type="button" class="btn btn-ghost">📷 Scan a Photo</button>
+        <!-- Only shown when the box already has text. Scanning used to always
+             append, which made a retry after a bad scan look like it had
+             failed again: the old garbage was still sitting on top of the new
+             text. Asking is one tap, and it keeps the genuine multi-page
+             workflow (scan page 1, scan page 2) working. -->
+        <div id="catalog-scan-merge-confirm" class="parent-pin-entry shop-buy-confirm hidden">
+          <p class="hint">There's already text in the box below. Add the scan to the end of it, or start fresh?</p>
+          <div class="parent-pin-actions">
+            <button id="btn-catalog-scan-append" type="button" class="btn btn-secondary">Add to it</button>
+            <button id="btn-catalog-scan-replace" type="button" class="btn btn-secondary">Replace it</button>
+            <button id="btn-catalog-scan-cancel" type="button" class="btn btn-ghost">Cancel</button>
+          </div>
+        </div>
         <p class="hint" id="catalog-scan-status"></p>
         <p class="hint">Scans a photo of a word list and fills the box below with what it reads — sideways and upside-down photos are turned the right way up automatically. Check it over before saving: OCR isn't perfect, and a bad scan can be edited by hand just like a paste. Best results come from a straight-on, flat shot of the page — a curled or angled page reads poorly no matter which way up it is.</p>
         <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 3 (starts 2026-09-01)&#10;&#10;friend&#10;habit, something you do often&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;GRADE 7 (starts 2026-09-01)&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
