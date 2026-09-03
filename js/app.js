@@ -2687,6 +2687,93 @@
     return best.deg;
   }
 
+  // ---- Pulling a numbered word list out of the raw scan -------------------
+  //
+  // A photographed workbook page OCRs to ~156 lines of which only ~19% carry
+  // a real list word; the rest is the poem, the illustrations' stray marks,
+  // the Pro Tip box and debris. Dumping all of that in the box is what made
+  // the scan feel broken even after the read itself got good. When the page
+  // IS a numbered list, reading the numbers lets us emit just the words, in
+  // the page's own order, and drop the other ~127 lines entirely.
+
+  // OCR misreads the marker as often as the word: "I." for "1.", "l0." for
+  // "10.". Repair only digit-lookalikes, then require a plausible list number.
+  function markerToNumber(raw) {
+    const digits = raw.replace(/[Il|]/g, "1").replace(/[OoQ]/g, "0").replace(/[^0-9]/g, "");
+    if (!digits) return null;
+    const n = parseInt(digits.slice(-2), 10);
+    return n >= 1 && n <= 60 ? n : null;
+  }
+
+  // Cheap "is this a word at all" test. Deliberately NOT a dictionary: the
+  // page's real answer can be a rare word (subtrahend), and the classic OCR
+  // error here is daily -> dally, which is itself a real word — so a
+  // dictionary would pass the actual mistake and flag the actual answer.
+  const OCR_STOP_WORDS = new Set(["the", "a", "an", "and", "of", "to", "in", "is", "it", "for",
+    "on", "at", "or", "that", "this", "with", "means", "helps", "might", "seeing"]);
+  function looksLikeWord(w) {
+    const s = (w || "").replace(/[^A-Za-z'’-]/g, "");
+    if (s.length < 3) return false;
+    if (OCR_STOP_WORDS.has(s.toLowerCase())) return false;
+    if (!/[aeiouy]/i.test(s)) return false;   // no vowel: debris
+    if (/(.)\1\1/.test(s)) return false;      // "111", "lll"
+    return true;
+  }
+
+  function collectNumbered(text) {
+    const found = [];
+    text.split("\n").forEach((line, i) => {
+      const m = line.trim().match(/^([0-9IlOoQ%|\]]{1,3})[.,)]\s*(.+)$/);
+      if (!m) return;
+      const n = markerToNumber(m[1]);
+      if (n === null) return;
+      const word = m[2].trim().split(/[\s—–-]+/)[0].replace(/[^A-Za-z'’-]/g, "");
+      if (word) found.push({ n, word, line: i });
+    });
+    return found;
+  }
+
+  // A page can carry several independent numbered runs side by side (this
+  // workbook has a decorative "1. might" two columns from "1. submarine").
+  // A real entry sits near its own neighbours in reading order, so proximity
+  // to n-1/n+1 decides a collision — that fixed item 1 where confidence alone
+  // had picked the decoration.
+  function pickNumbered(found) {
+    const byNum = new Map();
+    found.forEach((f) => {
+      if (!byNum.has(f.n)) byNum.set(f.n, []);
+      byNum.get(f.n).push(f);
+    });
+    const chosen = new Map();
+    for (const [n, list] of byNum) {
+      let best = null, bestScore = -1;
+      for (const c of list) {
+        const neighbours = found.filter((o) =>
+          (o.n === n - 1 || o.n === n + 1) && Math.abs(o.line - c.line) <= 6).length;
+        const score = neighbours * 10 + (looksLikeWord(c.word) ? 1 : 0);
+        if (score > bestScore) { bestScore = score; best = c; }
+      }
+      chosen.set(n, best.word);
+    }
+    return chosen;
+  }
+
+  // Two passes of the SAME engine in different page-segmentation modes, not
+  // two different OCR engines: mode 11 (sparse text) reads the list cleanly,
+  // mode 6 (uniform block) reads the warped lower half better. Merging them
+  // took the sorted list from 23 to 25 of the page's 33 known entries. Where
+  // they disagree the entry is flagged rather than silently resolved.
+  function mergeNumbered(primary, secondary) {
+    const nums = [...new Set([...primary.keys(), ...secondary.keys()])].sort((a, b) => a - b);
+    return nums.map((n) => {
+      const a = primary.get(n), b = secondary.get(n);
+      let word = a || b;
+      const disagree = a && b && a.toLowerCase() !== b.toLowerCase();
+      if (disagree && looksLikeWord(b) && !looksLikeWord(a)) word = b;
+      return { n, word, uncertain: Boolean(disagree) || !looksLikeWord(word) };
+    });
+  }
+
   document.getElementById("catalog-scan-input").addEventListener("change", async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = ""; // lets picking the SAME file again re-fire change
@@ -2716,18 +2803,52 @@
       const deg = await scanForOrientation(worker, bitmap, status);
       showProgress = true;
       status.textContent = "Reading the words…";
-      const { data } = await worker.recognize(rotatedCanvas(bitmap, deg, OCR_MAX_SIDE));
-      if (bitmap.close) bitmap.close();
-      const text = (data && data.text || "").trim();
-      if (!text) {
+      const page = rotatedCanvas(bitmap, deg, OCR_MAX_SIDE);
+      const { data } = await worker.recognize(page);
+      const rawText = (data && data.text || "").trim();
+      if (!rawText) {
+        if (bitmap.close) bitmap.close();
         status.textContent = "Couldn't read any text in that photo — try a clearer, brighter shot, or paste by hand.";
         return;
       }
+
+      // Second pass in a different segmentation mode, for the merge above.
+      // Only worth its ~3s when the page actually looks like a numbered list.
+      let entries = [];
+      const primary = pickNumbered(collectNumbered(rawText));
+      if (primary.size >= 3) {
+        status.textContent = "Cross-checking the list…";
+        await worker.setParameters({ tessedit_pageseg_mode: "6" });
+        const second = await worker.recognize(page);
+        await worker.setParameters({ tessedit_pageseg_mode: OCR_PAGE_MODE });
+        entries = mergeNumbered(primary, pickNumbered(collectNumbered(second.data.text || "")));
+      }
+      if (bitmap.close) bitmap.close();
+
+      // The box feeds parseCatalogText, which turns each whole line into one
+      // word — so the numbering must NOT go in, or the catalog ends up with a
+      // word literally called "1. submarine". The numbers' job is ordering and
+      // the gap report; only the words themselves are written.
+      const usingList = entries.length >= 3;
+      const text = usingList ? entries.map((e) => e.word).join("\n") : rawText;
+
       const box = document.getElementById("catalog-paste-input");
       const previous = box.value;
       box.value = (scanMergeMode === "append" && previous.trim()) ? previous + "\n\n" + text : text;
       box.scrollIntoView({ behavior: "smooth", block: "center" });
-      status.textContent = "Scanned — read it over and fix anything wrong before previewing. ";
+
+      if (usingList) {
+        const nums = entries.map((e) => e.n);
+        const gaps = [];
+        for (let n = Math.min(...nums); n <= Math.max(...nums); n++) if (!nums.includes(n)) gaps.push(n);
+        const shaky = entries.filter((e) => e.uncertain).map((e) => e.word);
+        let msg = `Found ${entries.length} numbered words, in the page's order.`;
+        if (shaky.length) msg += ` Check these — they read poorly: ${shaky.join(", ")}.`;
+        if (gaps.length) msg += ` Couldn't read ${gaps.length === 1 ? "number" : "numbers"} ${gaps.join(", ")} — add ${gaps.length === 1 ? "it" : "them"} by hand.`;
+        status.textContent = msg + " ";
+      } else {
+        status.textContent = "Scanned — read it over and fix anything wrong before previewing. ";
+      }
       // Replacing throws away whatever was in the box, so it needs a way back:
       // a scan that reads badly shouldn't cost the text it landed on top of.
       if (previous.trim() && box.value !== previous + "\n\n" + text) {

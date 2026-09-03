@@ -1448,3 +1448,60 @@ checker passes it silently, converting an honest gap into a confident wrong word
 taught to a child. `subtrahend` is the mirror risk: real but rare, so a
 dictionary may "correct" it to something wrong. Flag low confidence; never
 auto-correct a spelling list.
+
+## Sorted numbered-word extraction, and what targeted cropping is actually for (2026-09-02)
+
+Even with mode 11 reading well, the box still received the whole page: ~156
+lines of which only ~19% carried a real list word. The read was fine; the
+*output* was the problem. When the page is a numbered list, reading the
+numbers lets us emit just the words in the page's own order and drop the
+other ~127 lines.
+
+**How it works** (`js/app.js`): parse `N.` markers line-by-line (mode 11 puts
+one entry per line, so no bounding-box geometry is needed), repair
+digit-lookalikes in the marker (`I.` -> `1.`), then resolve collisions by
+neighbour proximity - a real entry sits within a few lines of its own n-1/n+1,
+while the decorative `1. might` two columns over sits near nothing. That
+neighbour rule is what finally got item 1 right; ranking on OCR confidence had
+picked the decoration.
+
+**Two passes, merged.** Mode 11 (sparse text) reads the list; mode 6 (uniform
+block) reads the warped lower half better. Merging took the sorted list from
+23 to 25 of the page's 33 known entries. Where the passes disagree, or the
+word fails a shape test, the entry is flagged in the status line rather than
+silently resolved.
+
+**The numbering must not reach the box.** `parseCatalogText` turns each whole
+line into one word, so writing `1. submarine` would create a catalog word
+literally called "1. submarine". Only the words are written; the numbers drive
+ordering and the "couldn't read numbers 17, 24, 25..." gap report.
+
+End-to-end in Chrome on the original failing photo: 27 entries, 24 correct, in
+order, importable - against a wall of noise before. Cost is ~17s on desktop
+(four probes plus two full-resolution passes), up from ~7s.
+
+### Known failure mode
+
+A misread marker can put a wrong word in a *correct-looking* slot: `33. torrid`
+lost its second digit and landed in slot 3, displacing `subtitle`. The shape
+check flagged it ("Orrid"), but the displaced word is silently gone rather than
+reported as a gap. Flags catch it; the gap report does not.
+
+### Targeted cropping - measured, and it is not an accuracy fix
+
+Tested cropping to the list region and to the warped vocabulary region, each at
+1x/2x/3x:
+
+| | words | signal |
+|---|---|---|
+| full page | 23/23 spelling words | 156 lines, 19% carry a real word |
+| cropped list | 20-21/23 | 50 lines, 40% |
+| cropped vocab, 2x | 6/10 vocab (recovers `estuary`) | 48 lines, 13% |
+
+Cropping **lowered** word recall - the full page already reads the spelling
+list 23/23, and a crop changes the local statistics Tesseract thresholds
+against. What it does buy is signal density: junk drops from ~127 lines to
+~30. But the numbered extraction above removes that noise anyway, without
+asking anyone to draw a box. So a crop UI is a nice-to-have for pages the
+parser cannot handle, not the fix for this one. Do not build it expecting
+better recognition.
