@@ -216,6 +216,9 @@
   const micSupported = !!SpeechRecCtor;
 
   function attachMic(btnEl, inputEl) {
+    // beforeinput only fires for real editing, never for a programmatic
+    // value assignment — so this cleanly distinguishes typing from dictation.
+    if (inputEl) inputEl.addEventListener("beforeinput", () => noteInputSource(inputEl.id, "type"));
     if (!micSupported || !btnEl) return;
     btnEl.classList.remove("hidden");
     let recognizing = false;
@@ -242,6 +245,10 @@
         inputEl.focus();
         try { inputEl.setSelectionRange(clean.length, clean.length); } catch (err) { /* ignore */ }
         inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+        // After the dispatch, so the synthetic input event above doesn't
+        // immediately reset this to "type". Marks the answer as dictated so a
+        // miss isn't diffed letter-by-letter against what the recogniser heard.
+        noteInputSource(inputEl.id, "mic");
       };
       recognizer.onerror = () => { /* ignore, let them type instead */ };
       recognizer.onend = () => {
@@ -720,6 +727,120 @@
   // Every current-week word that isn't "solid," worst accuracy first,
   // never-practiced words last — the parent dashboard's "what to drill"
   // panel (spec §6).
+  // ---- Trouble letters ---------------------------------------------------
+  //
+  // "Wrong, it's receive" teaches far less than showing WHICH letters slipped.
+  // A plain LCS over the two strings is plenty here — spelling words are under
+  // ~25 characters, so the O(n*m) table is nothing.
+  function lcsOps(a, b) {
+    const n = a.length, m = b.length;
+    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const ops = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { ops.push({ op: "same", a: a[i], b: b[j], ai: i, bi: j }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ op: "del", a: a[i], ai: i }); i++; }
+      else { ops.push({ op: "ins", b: b[j], bi: j }); j++; }
+    }
+    while (i < n) { ops.push({ op: "del", a: a[i], ai: i }); i++; }
+    while (j < m) { ops.push({ op: "ins", b: b[j], bi: j }); j++; }
+    return ops;
+  }
+
+  // Fraction of the correct word that survived. Below ~0.5 the answer is a
+  // different word or keyboard mash, and a letter-by-letter diff against
+  // garbage teaches nothing — callers fall back to plain text.
+  function spellingSimilarity(given, correct) {
+    if (!given || !correct) return 0;
+    const ops = lcsOps(given, correct);
+    const same = ops.filter((o) => o.op === "same").length;
+    return same / Math.max(given.length, correct.length);
+  }
+
+  // Which indexes of the CORRECT word the miss got wrong.
+  function troubleIndexes(given, correct) {
+    const out = new Set();
+    lcsOps(given, correct).forEach((o) => { if (o.op === "ins") out.add(o.bi); });
+    return out;
+  }
+
+  // Two lines: what they wrote (wrong letters struck through) and what it is
+  // (missing letters marked). Both are built from escaped single characters,
+  // so nothing user-supplied reaches innerHTML unescaped.
+  function renderSpellingDiff(given, correct) {
+    const ops = lcsOps(given, correct);
+    let wrote = "", real = "";
+    ops.forEach((o) => {
+      if (o.op === "same") { wrote += escapeAttr(o.a); real += escapeAttr(o.b); }
+      else if (o.op === "del") wrote += `<span class="tl-bad">${escapeAttr(o.a)}</span>`;
+      else real += `<mark class="tl-fix">${escapeAttr(o.b)}</mark>`;
+    });
+    const missing = ops.filter((o) => o.op === "ins").map((o) => o.b).join("");
+    const caption = missing && missing.length <= 3
+      ? `<span class="tl-caption">Watch the “${escapeAttr(missing)}”.</span>` : "";
+    return `<span class="tl-row">You wrote: <span class="tl-word">${wrote}</span></span>` +
+           `<span class="tl-row">It's: <span class="tl-word">${real}</span></span>${caption}`;
+  }
+
+  // The letters at least two recorded misses agree on, else the latest miss's.
+  // Mic misses are excluded: dictation returns whole words, so a "miss" there
+  // is a homophone, not a letter slip, and it would underline the wrong thing.
+  function troubleSpan(w) {
+    const misses = (w.spelling && Array.isArray(w.spelling.misses) ? w.spelling.misses : [])
+      .filter((m) => m && typeof m.t === "string" && m.src !== "mic");
+    if (!misses.length || wordStatus(w) === "solid") return null;
+    const correct = normalizeSpelling(w.text);
+    const usable = misses.filter((m) => spellingSimilarity(normalizeSpelling(m.t), correct) >= 0.5);
+    if (!usable.length) return null;
+    const counts = new Map();
+    usable.forEach((m) => troubleIndexes(normalizeSpelling(m.t), correct)
+      .forEach((i) => counts.set(i, (counts.get(i) || 0) + 1)));
+    const agreed = [...counts.entries()].filter(([, c]) => c >= 2).map(([i]) => i);
+    // Three different wrong spellings agree on nothing; union-ing them would
+    // light up the whole word, so fall back to the most recent miss alone.
+    const idx = agreed.length ? new Set(agreed) : troubleIndexes(normalizeSpelling(usable[0].t), correct);
+    return idx.size ? idx : null;
+  }
+
+  // Only worth showing when the answer is recognisably an attempt at the word.
+  // Dictated answers are whole words from the recogniser, so a letter diff
+  // there would be diffing the microphone, not the speller.
+  function spellingDiffBlock(given, correctText, src) {
+    const a = normalizeSpelling(given || ""), b = normalizeSpelling(correctText || "");
+    if (!a || !b || a === b) return "";
+    if (src === "mic" || spellingSimilarity(a, b) < 0.5) return "";
+    return `<span class="trouble-letters">${renderSpellingDiff(a, b)}</span>`;
+  }
+
+  // Renders a word with its repeatedly-missed letters marked. troubleSpan()
+  // indexes the NORMALIZED word, so walk the original text and advance the
+  // normalized cursor only on characters that survive normalisation —
+  // otherwise a hyphen or apostrophe shifts every mark after it.
+  function markTroubleLetters(w) {
+    const idx = troubleSpan(w);
+    if (!idx) return escapeAttr(w.text);
+    const norm = normalizeSpelling(w.text);
+    let k = 0, out = "";
+    for (const ch of w.text) {
+      const isNormChar = k < norm.length && normalizeSpelling(ch) === norm[k];
+      out += (isNormChar && idx.has(k))
+        ? `<mark class="tl-fix">${escapeAttr(ch)}</mark>` : escapeAttr(ch);
+      if (isNormChar) k++;
+    }
+    return `${out}<span class="tl-tag" aria-label="tricky part">tricky</span>`;
+  }
+
+  // Which control last filled an input — the mic writes it programmatically,
+  // and a real keystroke clears the flag.
+  const inputSources = {};
+  function lastInputSource(id) { return inputSources[id] || "type"; }
+  function noteInputSource(id, src) { inputSources[id] = src; }
+
   function wordsNeedingWork(progress) {
     if (!progress) return [];
     return progress.words
@@ -916,6 +1037,19 @@
     if (statKind === "spelling") {
       w.spelling.attempts++;
       if (correct) w.spelling.correct++;
+      // Keep what they actually wrote. A bare attempts++ throws away the most
+      // diagnostic thing this app ever sees: "receive 40%" tells a parent
+      // nothing, "usually writes recieve" tells them it's the ie/ei. Newest
+      // first, capped — three misses is enough to spot a pattern and keeps a
+      // 20-word week comfortably under a kilobyte in the synced doc.
+      if (!correct && opts && typeof opts.given === "string") {
+        const given = opts.given.replace(/[\x00-\x1f]/g, "").trim().slice(0, 40);
+        if (given) {
+          if (!Array.isArray(w.spelling.misses)) w.spelling.misses = [];
+          w.spelling.misses.unshift({ t: given, d: todayLocalStr(), src: (opts.src === "mic" ? "mic" : "type") });
+          w.spelling.misses.length = Math.min(w.spelling.misses.length, 3);
+        }
+      }
     } else {
       w.vocab.attempts++;
       if (correct) w.vocab.known++;
@@ -1818,7 +1952,18 @@
       ? needsWork.map((w) => {
           const acc = wordAccuracy(w);
           const unpracticed = acc === null;
-          return `<div class="psc-needs-work-row${unpracticed ? " unpracticed" : ""}"><span>${escapeAttr(w.text)}</span><span>${unpracticed ? "not practiced" : Math.round(acc * 100) + "%"}</span></div>`;
+          // "receive · 40%" hides the useful half. Showing what they actually
+          // wrote, and how often, turns a number into something a parent can
+          // sit down and work on.
+          const misses = (w.spelling && Array.isArray(w.spelling.misses) ? w.spelling.misses : [])
+            .filter((m) => m && typeof m.t === "string");
+          let wroteHtml = "";
+          if (misses.length) {
+            const top = misses[0].t;
+            const same = misses.filter((m) => normalizeSpelling(m.t) === normalizeSpelling(top)).length;
+            wroteHtml = `<span class="psc-wrote">wrote “${escapeAttr(top.slice(0, 40))}”${same > 1 ? " ×" + same : ""}</span>`;
+          }
+          return `<div class="psc-needs-work-row${unpracticed ? " unpracticed" : ""}"><span>${escapeAttr(w.text)}${wroteHtml}</span><span>${unpracticed ? "not practiced" : Math.round(acc * 100) + "%"}</span></div>`;
         }).join("")
       : `<p class="psc-empty">Nothing needs extra work right now! 🎉</p>`;
 
@@ -2469,6 +2614,7 @@
           <div class="result-row">
             <span>${escapeAttr(w.label)} <span style="font-weight:400;color:var(--muted);font-size:.85rem">(${w.words.length} words)</span></span>
             <span class="catalog-week-actions">
+              <button class="icon-btn-sm${w.verse && w.verse.ref ? " has-verse" : ""}" data-week-verse="${w.id}" title="${w.verse && w.verse.ref ? "Verse: " + escapeAttr(w.verse.ref) : "Add a Bible verse"}">📜</button>
               <button class="icon-btn-sm" data-week-edit="${w.id}" title="Load into the box below to edit">✏️</button>
               <button class="icon-btn-sm" data-week-delete="${w.id}" title="Delete this week">🗑️</button>
             </span>
@@ -2478,7 +2624,104 @@
     }).join("");
   }
 
+  // ---- Verse picker (catalog editor) ------------------------------------
+  //
+  // Looks the reference up in the bundled KJV as you type and shows the text
+  // before you commit, so a wrong reference is obvious immediately rather
+  // than after a kid opens practice and finds the wrong passage.
+  let verseWeekId = null;
+  let verseFound = null;
+  let verseLookupTimer = null;
+
+  function openVersePicker(week) {
+    verseWeekId = week.id;
+    verseFound = null;
+    document.getElementById("catalog-verse-week-label").textContent = `Verse for ${week.label}`;
+    const input = document.getElementById("catalog-verse-ref");
+    input.value = (week.verse && week.verse.ref) || "";
+    document.getElementById("btn-catalog-verse-remove").classList.toggle("hidden", !(week.verse && week.verse.ref));
+    document.getElementById("catalog-verse-panel").classList.remove("hidden");
+    document.getElementById("catalog-verse-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+    runVerseLookup();
+    input.focus();
+  }
+
+  function closeVersePicker() {
+    verseWeekId = null;
+    verseFound = null;
+    document.getElementById("catalog-verse-panel").classList.add("hidden");
+    document.getElementById("catalog-verse-preview").classList.add("hidden");
+    document.getElementById("catalog-verse-status").textContent = "";
+    document.getElementById("btn-catalog-verse-save").disabled = true;
+  }
+
+  async function runVerseLookup() {
+    const raw = document.getElementById("catalog-verse-ref").value.trim();
+    const status = document.getElementById("catalog-verse-status");
+    const preview = document.getElementById("catalog-verse-preview");
+    const saveBtn = document.getElementById("btn-catalog-verse-save");
+    verseFound = null;
+    saveBtn.disabled = true;
+    if (!raw) { status.textContent = "Type a reference — book, chapter, verse."; preview.classList.add("hidden"); return; }
+    if (typeof KJV === "undefined") { status.textContent = "Verse lookup isn't loaded — reload the page and try again."; return; }
+    try {
+      const found = await KJV.lookup(raw);
+      // A slow book fetch can land after the user has typed on; ignore it.
+      if (document.getElementById("catalog-verse-ref").value.trim() !== raw) return;
+      verseFound = found;
+      status.textContent = `${found.ref} · ${found.verses.length} verse${found.verses.length === 1 ? "" : "s"} · ${found.text.split(/\s+/).length} words`;
+      preview.textContent = found.text;
+      preview.classList.remove("hidden");
+      saveBtn.disabled = false;
+    } catch (err) {
+      if (document.getElementById("catalog-verse-ref").value.trim() !== raw) return;
+      status.textContent = err.message;
+      preview.classList.add("hidden");
+    }
+  }
+
+  document.getElementById("catalog-verse-ref").addEventListener("input", () => {
+    clearTimeout(verseLookupTimer);
+    verseLookupTimer = setTimeout(runVerseLookup, 250);
+  });
+  document.getElementById("catalog-verse-ref").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); clearTimeout(verseLookupTimer); runVerseLookup(); }
+  });
+  document.getElementById("btn-catalog-verse-cancel").addEventListener("click", closeVersePicker);
+
+  async function saveWeekVerse(weekId, verseValue, doneMsg) {
+    const code = getCatalogCode();
+    const week = state.catalogWeeks.find((w) => w.id === weekId);
+    if (!week) return;
+    if (verseValue) week.verse = verseValue; else delete week.verse;
+    save(catalogWeeksKey(code), state.catalogWeeks);
+    renderCatalogWeeksManager();
+    closeVersePicker();
+    toast(doneMsg);
+    if (firestoreReady() && code !== LOCAL_CATALOG) {
+      try { await Sync.saveCatalogWeeks(code, [week]); }
+      catch (e) { toast("Saved on this device — sync didn't confirm it."); }
+    }
+    if (state.profile) await loadCatalogAndWeek();
+  }
+
+  document.getElementById("btn-catalog-verse-save").addEventListener("click", async () => {
+    if (!verseWeekId || !verseFound) return;
+    await saveWeekVerse(verseWeekId, { ref: verseFound.ref, text: verseFound.text, verses: verseFound.verses },
+      `Saved ${verseFound.ref}`);
+  });
+  document.getElementById("btn-catalog-verse-remove").addEventListener("click", async () => {
+    if (!verseWeekId) return;
+    await saveWeekVerse(verseWeekId, null, "Verse removed");
+  });
+
   document.getElementById("catalog-weeks-list").addEventListener("click", (e) => {
+    const verseBtn = e.target.closest("[data-week-verse]");
+    if (verseBtn) {
+      const week = state.catalogWeeks.find((w) => w.id === verseBtn.getAttribute("data-week-verse"));
+      if (week) openVersePicker(week);
+      return;
+    }
     const editBtn = e.target.closest("[data-week-edit]");
     if (editBtn) {
       const week = state.catalogWeeks.find((w) => w.id === editBtn.getAttribute("data-week-edit"));
@@ -3731,9 +3974,22 @@
    * medals — a kid starting the week reaches for this, not Progress.
    * ------------------------------------------------------------------- */
   function openWordList() {
+    // Always arrive as the plain readable list. Marks are per-sitting, so a
+    // stale half-finished quiz from an earlier visit must not linger.
+    listQuiz.on = false;
+    listQuiz.marked.clear();
+    document.getElementById("word-list-quiz-toggle").textContent = "📋 Quiz Mode — mark as you go";
+    document.getElementById("word-list-quiz-bar").classList.add("hidden");
     renderWordList();
     showScreen("word-list");
   }
+
+  // Parent-led oral quiz over this week's list: the parent reads a word out,
+  // the kid spells it or gives the meaning, and the parent taps ✓ or ✗. Marks
+  // go through recordAnswer() like every other mode, so a miss here feeds
+  // medals and Smart Review instead of living in a private tally that nothing
+  // else can see — which is the whole point of tracking it.
+  const listQuiz = { on: false, kind: "spelling", marked: new Map() };
 
   function renderWordList() {
     document.getElementById("word-list-week-label").textContent = state.selectedWeek ? state.selectedWeek.label : "";
@@ -3748,11 +4004,72 @@
       const def = w.definition && w.definition.trim()
         ? `<p class="word-list-row-def">${escapeAttr(w.definition)}</p>`
         : "";
-      row.innerHTML = `<div class="word-list-row-main"><span class="word-list-row-word">${escapeAttr(w.text)}</span><button class="word-list-row-speak" title="Hear it">🔊</button></div>${def}`;
+      const mark = listQuiz.marked.get(w.id);
+      if (mark) row.classList.add(mark === "right" ? "word-row-right" : "word-row-wrong");
+      const marks = listQuiz.on
+        ? `<span class="word-row-marks">
+             <button class="mark-btn mark-right${mark === "right" ? " active" : ""}" data-mark="right" title="Got it">✓</button>
+             <button class="mark-btn mark-wrong${mark === "wrong" ? " active" : ""}" data-mark="wrong" title="Missed it">✗</button>
+           </span>`
+        : "";
+      // Safe to mark the tricky letters here: this screen already shows the
+      // whole word. It must never appear anywhere the kid is being asked to
+      // produce the spelling — that would just hand them the answer.
+      row.innerHTML = `<div class="word-list-row-main"><span class="word-list-row-word">${markTroubleLetters(w)}</span><button class="word-list-row-speak" title="Hear it">🔊</button>${marks}</div>${def}`;
       row.querySelector(".word-list-row-speak").addEventListener("click", () => speak(w.text));
+      row.querySelectorAll("[data-mark]").forEach((btn) =>
+        btn.addEventListener("click", () => markListWord(w, btn.getAttribute("data-mark"))));
       wrap.appendChild(row);
     });
+    renderQuizTally();
   }
+
+  function markListWord(w, mark) {
+    const previous = listQuiz.marked.get(w.id);
+    if (previous === mark) return;         // tapping the same mark twice is a no-op
+    // Re-marking a word would otherwise record a second attempt and quietly
+    // skew its accuracy, so only the first mark for a word counts this round.
+    if (!previous) {
+      // silent: a parent rattling through 20 words doesn't want 20 chimes.
+      recordAnswer(w, mark === "right", listQuiz.kind, { silent: true });
+      saveProgress(state.profile.id, state.progress.weekId, state.progress);
+    }
+    listQuiz.marked.set(w.id, mark);
+    renderWordList();
+  }
+
+  function renderQuizTally() {
+    const bar = document.getElementById("word-list-quiz-tally");
+    const summary = document.getElementById("word-list-quiz-summary");
+    if (!listQuiz.on) { summary.classList.add("hidden"); return; }
+    const marks = [...listQuiz.marked.values()];
+    const right = marks.filter((m) => m === "right").length;
+    const wrong = marks.length - right;
+    bar.textContent = `${right} right · ${wrong} missed · ${state.progress.words.length - marks.length} to go`;
+    const missedWords = state.progress.words.filter((w) => listQuiz.marked.get(w.id) === "wrong");
+    if (marks.length === state.progress.words.length && state.progress.words.length) {
+      summary.innerHTML = missedWords.length
+        ? `<strong>Done — ${right} of ${marks.length} right.</strong><p class="hint">Still shaky: ${missedWords.map((w) => escapeAttr(w.text)).join(", ")}. These are queued up in Smart Review.</p>`
+        : `<strong>Done — all ${right} right. 🎉</strong>`;
+      summary.classList.remove("hidden");
+    } else {
+      summary.classList.add("hidden");
+    }
+  }
+
+  document.getElementById("word-list-quiz-toggle").addEventListener("click", () => {
+    listQuiz.on = !listQuiz.on;
+    listQuiz.marked.clear();
+    document.getElementById("word-list-quiz-toggle").textContent =
+      listQuiz.on ? "✓ Done Quizzing" : "📋 Quiz Mode — mark as you go";
+    document.getElementById("word-list-quiz-bar").classList.toggle("hidden", !listQuiz.on);
+    renderWordList();
+  });
+  document.querySelectorAll(".quiz-kind-btn").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      listQuiz.kind = btn.getAttribute("data-kind");
+      document.querySelectorAll(".quiz-kind-btn").forEach((b) => b.classList.toggle("active", b === btn));
+    }));
 
   document.getElementById("word-list-hear-all").addEventListener("click", () => {
     // speak() calls speechSynthesis.cancel() before every utterance, so
@@ -3850,7 +4167,8 @@
     const answer = document.getElementById("spell-input").value.trim();
     const correct = normalizeSpelling(answer) === normalizeSpelling(w.text);
     const canPay = !offGradeWeek();
-    const result = recordAnswer(w, correct, "spelling", { noStars: !canPay, streakStep: spell.streak + 1 });
+    const result = recordAnswer(w, correct, "spelling",
+      { noStars: !canPay, streakStep: spell.streak + 1, given: answer, src: lastInputSource("spell-input") });
     trackSessionResult(spell, w, result);
     const feedback = document.getElementById("spell-feedback");
     if (correct) {
@@ -3866,7 +4184,9 @@
       spell.missedThisRound = true;
       if (spell.round === 1) spell.retry.push(w);
       feedback.className = "feedback incorrect";
-      feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(w.text)}</span><span class="retype-prompt">Now type it once to lock it in 🔒</span>`;
+      feedback.innerHTML = `❌ Not quite. The word is:<span class="correct-answer">${escapeAttr(w.text)}</span>`
+        + spellingDiffBlock(answer, w.text)
+        + `<span class="retype-prompt">Now type it once to lock it in 🔒</span>`;
     }
     updateStreakBadge(document.getElementById("spell-streak"), spell.streak);
     feedback.classList.remove("hidden");

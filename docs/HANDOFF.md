@@ -1626,3 +1626,85 @@ When it is built: match on normalised words only (speech recognition returns
 no punctuation), expect KJV wording - "thou", "hast", "begotten" - to defeat
 the recogniser regularly, and ship an "I said it right" self-grade escape
 hatch or the feature will punish kids for the software's failure.
+
+## Verse picker, parent-led quiz, and trouble letters (2026-09-03)
+
+Three features. The third came from asking Fable 5.1 for a proposal; the
+design below is its "Trouble Letters", implemented as specified.
+
+### 1. Verse picker (catalog editor)
+
+Adding one verse to one week had meant hand-writing a `VERSE` directive into
+the same textarea as a year of spelling words - a miserable way to do a
+ten-second job. Each week row now has a 📜 button opening a small panel: type
+a reference, the bundled KJV is looked up as you type (250ms debounce), the
+text previews, Save writes it to that week alone. Remove clears it. The row's
+📜 is highlighted and its tooltip names the verse once one is set.
+
+Save goes through `Sync.saveCatalogWeeks(code, [week])` - one week, not the
+whole catalog - then `loadCatalogAndWeek()` so the change reaches the student
+immediately. A slow book fetch that lands after the user has typed on is
+discarded by comparing the input's current value against the request's.
+
+### 2. Parent-led quiz over This Week's Words
+
+The parent reads the list aloud and marks each word. Deliberately layered on
+the existing list rather than built as its own screen: the whole point is that
+the page you read from still looks like the list.
+
+"Quiz Mode" reveals check/cross buttons per row (44px targets - these get
+tapped fast), a Spelling/Meaning toggle choosing which stat the mark lands in,
+a running tally, and a summary naming the missed words once every word is
+marked. Marks go through `recordAnswer()` like every other mode, so a miss
+feeds medals and Smart Review instead of a private tally nothing else can see.
+Silent (no chime per word), first mark per word only (re-marking would record
+a second attempt and skew accuracy), and the mode resets on every entry to the
+screen so a stale half-finished quiz never lingers.
+
+### 3. Trouble letters (Fable 5.1's proposal)
+
+A spelling miss used to be `attempts++` and nothing else - the typed string
+was discarded. That threw away the most diagnostic thing the app ever sees:
+"receive 40%" tells a parent nothing; "usually writes recieve" tells them it
+is the ie/ei.
+
+`recordAnswer` now takes `opts.given` / `opts.src` and stores
+`w.spelling.misses = [{t, d, src}]`, newest first, capped at 3 (a 20-word week
+stays well under a kilobyte in the synced doc). On a miss, Spelling Practice
+renders an LCS diff - "You wrote: briliant / It's: bri[l]liant / Watch the l"
+- above the existing Lock It In retype. `troubleSpan()` then marks those
+letters on This Week's Words with a "tricky" tag, and the parent dashboard's
+needs-work rows gain "wrote 'briliant' x2".
+
+Three guards that matter, all of which Fable called in advance:
+
+- **Mic answers are excluded.** Dictation returns whole words, so a miss there
+  is a homophone, not a letter slip; diffing it would confidently underline
+  the wrong letters. `beforeinput` fires only for real editing, never for a
+  programmatic value set, which cleanly separates typing from dictation.
+- **A similarity floor of 0.5.** Below it the answer is a different word or
+  keyboard mash, and a letter diff against garbage teaches nothing. The miss
+  still counts; only the diff is suppressed.
+- **Never shown where the kid must produce the spelling.** The mark appears on
+  This Week's Words only - not Spelling, Test, Speed or Scramble - or it would
+  simply hand over the answer.
+
+`troubleSpan` needs two misses to agree before marking; three disagreeing
+spellings fall back to the most recent miss alone rather than union-ing spans,
+which would light up the whole word. Indexes address the *normalised* word, so
+`markTroubleLetters` walks the original text and advances the normalised
+cursor only on surviving characters - otherwise an apostrophe or hyphen shifts
+every mark after it.
+
+15 unit cases in `troubletest.js` cover the transposition rendering, the
+similarity gate, mic suppression, the agreement rules, and a multi-word entry.
+
+### Tooling trap: raw control characters from the shell
+
+An edit put literal 0x00/0x1f bytes into a regex in `app.js`, which still ran
+but made `grep` report the file as binary. The Bash tool here eats backslashes
+in heredocs and in `node -e` strings, so a written `\x00` collapses into a real
+control byte. **Write patch scripts with the Write tool, or build such strings
+with `String.fromCharCode`.** `ctrlscan.js` in the scratchpad detects it, and
+the same backslash-eating broke two earlier test scripts - prefer Write over
+heredocs for anything containing escapes.

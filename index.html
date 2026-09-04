@@ -244,6 +244,24 @@
 
         <p class="shop-section-title">Existing Weeks</p>
         <div id="catalog-weeks-list" class="results-list"></div>
+        <!-- Verse picker. Deliberately NOT the bulk paste box: adding one
+             verse to one week had meant hand-writing a VERSE directive into
+             the same textarea as a year of spelling words, which is a
+             miserable way to do a 10-second job. Type a reference, see the
+             text, save it to that week. -->
+        <div id="catalog-verse-panel" class="parent-pin-entry hidden">
+          <p class="hint" id="catalog-verse-week-label"></p>
+          <label class="verse-search-label" for="catalog-verse-ref">Verse reference</label>
+          <input type="text" id="catalog-verse-ref" placeholder="John 3:16   ·   Romans 3:2-10   ·   Psalm 23"
+                 spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="words">
+          <p class="hint" id="catalog-verse-status"></p>
+          <div class="verse-preview hidden" id="catalog-verse-preview"></div>
+          <div class="parent-pin-actions">
+            <button id="btn-catalog-verse-save" class="btn btn-primary" disabled>Save Verse</button>
+            <button id="btn-catalog-verse-remove" class="btn btn-danger hidden">Remove</button>
+            <button id="btn-catalog-verse-cancel" class="btn btn-ghost">Cancel</button>
+          </div>
+        </div>
         <div id="catalog-week-delete-confirm" class="parent-pin-entry shop-buy-confirm hidden">
           <p class="hint">Delete <strong id="catalog-week-delete-label"></strong>? This removes it from the shared catalog for everyone using this code.</p>
           <div class="parent-pin-actions">
@@ -362,7 +380,19 @@
       <h2>📖 This Week's Words</h2>
       <p class="hint" id="word-list-week-label"></p>
       <button id="word-list-hear-all" class="btn btn-secondary">🔊 Hear the Whole List</button>
+      <!-- Parent-led oral quiz laid over the plain list, rather than as its
+           own screen: the whole point is that the list still looks exactly
+           like the list you read off. -->
+      <button id="word-list-quiz-toggle" class="btn btn-secondary">📋 Quiz Mode — mark as you go</button>
+      <div id="word-list-quiz-bar" class="quiz-bar hidden">
+        <div class="quiz-kind" role="group" aria-label="What are you asking for?">
+          <button class="quiz-kind-btn active" data-kind="spelling">Spelling</button>
+          <button class="quiz-kind-btn" data-kind="vocab">Meaning</button>
+        </div>
+        <span class="quiz-tally" id="word-list-quiz-tally" aria-live="polite"></span>
+      </div>
       <div id="word-list-rows" class="word-list-rows"></div>
+      <div id="word-list-quiz-summary" class="quiz-summary hidden"></div>
       <button id="word-list-exit" class="btn btn-primary shop-back-btn">Back to Menu</button>
     </section>
 

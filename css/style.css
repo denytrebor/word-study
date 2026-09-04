@@ -1279,3 +1279,106 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 .verse-word-cue { color: var(--primary); }
 .verse-word-blank:hover,
 .verse-word-cue:hover { background: var(--accent); color: #fff; }
+
+/* VERSE PICKER (catalog editor) */
+.verse-search-label { display: block; font-weight: 700; margin-bottom: 6px; font-size: 0.95rem; }
+#catalog-verse-ref { width: 100%; }
+.icon-btn-sm.has-verse { background: #eef2ff; border-radius: 8px; }
+.verse-preview {
+  background: var(--bg);
+  border-left: 4px solid var(--primary);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 10px 0;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.verse-preview.hidden { display: none; }
+
+/* PARENT-LED QUIZ over This Week's Words. The list keeps its normal look;
+   marking is layered on so the page you read from doesn't change shape. */
+.quiz-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0 4px;
+}
+.quiz-bar.hidden { display: none; }
+.quiz-kind { display: flex; gap: 6px; }
+.quiz-kind-btn {
+  min-height: 40px;
+  padding: 6px 16px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.quiz-kind-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.quiz-tally { color: var(--muted); font-weight: 700; font-size: 0.95rem; }
+.word-row-marks { display: inline-flex; gap: 6px; margin-left: auto; }
+.mark-btn {
+  width: 44px;              /* full touch target — this gets tapped fast */
+  height: 44px;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: var(--card);
+  font-size: 1.2rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+.mark-right { color: var(--success); }
+.mark-wrong { color: var(--danger); }
+.mark-right.active { background: var(--success); border-color: var(--success); color: #fff; }
+.mark-wrong.active { background: var(--danger); border-color: var(--danger); color: #fff; }
+.word-list-row.word-row-right { background: var(--success-bg); }
+.word-list-row.word-row-wrong { background: var(--danger-bg); }
+.quiz-summary {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+  margin: 14px 0;
+}
+.quiz-summary.hidden { display: none; }
+
+/* TROUBLE LETTERS — letter-level feedback on a spelling miss, plus the
+   "tricky part" mark on screens that already show the whole word. */
+.trouble-letters { display: block; margin: 10px 0 4px; }
+.tl-row { display: block; font-size: 0.98rem; line-height: 1.7; }
+.tl-word {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.1rem;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.tl-bad { text-decoration: line-through; opacity: 0.75; }
+mark.tl-fix {
+  background: none;
+  color: inherit;
+  font-weight: 900;
+  border-bottom: 3px solid currentColor;
+  padding-bottom: 1px;
+}
+.tl-caption { display: block; margin-top: 4px; font-size: 0.92rem; opacity: 0.9; }
+.tl-tag {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+.psc-wrote { display: block; color: var(--muted); font-size: 0.82rem; font-weight: 400; }
