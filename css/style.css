@@ -1382,3 +1382,16 @@ mark.tl-fix {
   vertical-align: middle;
 }
 .psc-wrote { display: block; color: var(--muted); font-size: 0.82rem; font-weight: 400; }
+
+/* Catalog week manager: which week is live, and which carry a verse. */
+.result-row.catalog-week-current { background: #eef2ff; border-radius: 10px; }
+.week-now-tag {
+  margin-left: 8px; padding: 1px 9px; border-radius: 999px;
+  background: var(--primary); color: #fff;
+  font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+.week-verse-tag {
+  margin-left: 8px; color: var(--muted);
+  font-size: 0.78rem; font-weight: 600; white-space: nowrap;
+}

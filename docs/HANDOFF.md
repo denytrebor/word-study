@@ -1708,3 +1708,45 @@ control byte. **Write patch scripts with the Write tool, or build such strings
 with `String.fromCharCode`.** `ctrlscan.js` in the scratchpad detects it, and
 the same backslash-eating broke two earlier test scripts - prefer Write over
 heredocs for anything containing escapes.
+
+## The verse that saved fine and never appeared (2026-09-04)
+
+Reported as "I add a verse, click save, go to Verse Practice, nothing there."
+The save was working perfectly. The verse went onto **Week 1**, while the kid
+was studying **Week 4** — and Verse Practice only ever reads the current week.
+
+Reproduced by building a catalog the shape a real one has (several weeks
+starting before today) instead of the single-week catalog the feature was
+tested against. With one week, the week you click is always the current week
+and the bug cannot occur. That is exactly why it shipped.
+
+Three fixes, all about making state visible rather than changing behaviour:
+
+1. **"THIS WEEK" badge in the week manager** (`renderCatalogWeeksManager`),
+   from `computeAutoWeek` per grade. The list was previously just
+   "Week 1...36" with no indication which one a kid is on, so the natural
+   click — the first row — silently put content where nobody would see it.
+   Weeks carrying a verse also show its reference inline, so the whole term's
+   verse coverage is readable at a glance.
+
+2. **The Home tile names its verse.** `#verse-card-sub` had been dead markup
+   since the feature landed; it now reads "Proverbs 3:5-6" or "none this
+   week". Previously the card looked identical either way, so the only way to
+   discover an empty week was to tap it and read a toast.
+
+3. **The empty-state toast says where the verses actually are** — "No verse on
+   Week 4 — but Week 1 (John 3:16) has one" — instead of a generic "none set"
+   that gives a parent who just saved one nothing to act on.
+
+### The testing lesson
+
+The end-to-end test used a one-week catalog. Every assertion passed and the
+feature was still broken for its actual user. **Test against the shape of the
+real data, not the minimum that exercises the code path** — for this app that
+means a multi-week catalog with weeks in the past, because that is what every
+real catalog looks like by October.
+
+Also note: local HTTP caching bit twice more here. When verifying a change in
+the browser, `fetch(url, {cache:'reload'})` for each changed asset before
+reloading — unregistering the service worker alone is not enough, and a stale
+`app.js` looks exactly like a fix that did not work.

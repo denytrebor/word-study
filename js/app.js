@@ -2607,12 +2607,18 @@
     if (!state.catalogWeeks.length) { wrap.innerHTML = '<p class="hint">No weeks in this catalog yet.</p>'; return; }
     const grades = Array.from(new Set(state.catalogWeeks.map((w) => w.grade))).sort();
     wrap.innerHTML = grades.map((g) => {
+      // Which week a kid in this grade is actually on today. Without this the
+      // list is just "Week 1..36" and a parent adding a verse naturally clicks
+      // the first row — putting it on a week nobody is studying, where it
+      // silently never appears in practice. That exact confusion is why this
+      // badge exists; don't remove it.
+      const current = computeAutoWeek(state.catalogWeeks, g);
       const rows = state.catalogWeeks
         .filter((w) => w.grade === g)
         .sort((a, b) => a.weekNumber - b.weekNumber)
         .map((w) => `
-          <div class="result-row">
-            <span>${escapeAttr(w.label)} <span style="font-weight:400;color:var(--muted);font-size:.85rem">(${w.words.length} words)</span></span>
+          <div class="result-row${current && w.id === current.id ? " catalog-week-current" : ""}">
+            <span>${escapeAttr(w.label)} <span style="font-weight:400;color:var(--muted);font-size:.85rem">(${w.words.length} words)</span>${current && w.id === current.id ? '<span class="week-now-tag">this week</span>' : ""}${w.verse && w.verse.ref ? `<span class="week-verse-tag">📜 ${escapeAttr(w.verse.ref)}</span>` : ""}</span>
             <span class="catalog-week-actions">
               <button class="icon-btn-sm${w.verse && w.verse.ref ? " has-verse" : ""}" data-week-verse="${w.id}" title="${w.verse && w.verse.ref ? "Verse: " + escapeAttr(w.verse.ref) : "Add a Bible verse"}">📜</button>
               <button class="icon-btn-sm" data-week-edit="${w.id}" title="Load into the box below to edit">✏️</button>
@@ -3702,6 +3708,15 @@
     const summary = document.getElementById("home-medal-summary");
     const starterBtn = document.getElementById("btn-home-starter-lists");
     renderReviewBadge();
+    // Name the verse on its own tile. Without this the card looks identical
+    // whether a verse is set or not, so the only way to find out was to tap
+    // it and get a toast — which is how a verse saved to the wrong week went
+    // unnoticed.
+    const verseSub = document.getElementById("verse-card-sub");
+    if (verseSub) {
+      const v = state.progress && state.progress.verse;
+      verseSub.textContent = v && v.ref ? v.ref : "none this week";
+    }
     if (!state.selectedWeek || !state.progress) {
       document.getElementById("home-week-label").textContent = "No word list yet";
       document.getElementById("home-word-count").textContent = "Load a ready-made list to start practicing right now.";
@@ -3879,7 +3894,20 @@
 
   function openVersePractice() {
     const v = currentVerse();
-    if (!v) { toast("No verse set for this week yet — a parent or teacher can add one in Manage Word Catalog."); return; }
+    if (!v) {
+      // Say WHERE the verses actually are. A verse saved onto a week the kid
+      // isn't studying is the likeliest reason to land here, and a generic
+      // "none set" gives a parent who just saved one nothing to act on.
+      const elsewhere = (state.catalogWeeks || [])
+        .filter((w) => w.verse && w.verse.ref && (!state.selectedWeek || w.id !== state.selectedWeek.id)
+          && (!state.profile || !state.profile.grade || w.grade === state.profile.grade))
+        .map((w) => `${w.label} (${w.verse.ref})`);
+      const here = state.selectedWeek ? state.selectedWeek.label : "this week";
+      toast(elsewhere.length
+        ? `No verse on ${here} — but ${elsewhere.slice(0, 2).join(" and ")} ${elsewhere.length > 1 ? "have" : "has"} one. Add it to ${here} in Manage Word Catalog.`
+        : "No verse set for this week yet — a parent or teacher can add one in Manage Word Catalog.");
+      return;
+    }
     verse.pieces = versePieces(v);
     verse.index = 0;
     verse.hidden.clear();
