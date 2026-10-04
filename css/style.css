@@ -847,6 +847,7 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 .history-week .hw-meta { color: var(--muted); font-size: 0.9rem; }
 
 /* STAR SHOP */
+.shop-rotation { text-align: center; color: var(--muted); font-size: 0.85rem; margin: -12px 0 18px; }
 .shop-lifetime { text-align: center; color: var(--muted); font-size: 0.9rem; margin: -6px 0 18px; }
 /* The shared .parent-pin-entry box is 260px (sized for a PIN pad) — this one
    carries an item name and price and needs a bit more room, same reasoning

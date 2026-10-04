@@ -151,11 +151,11 @@ or `tier: "chase"`, plus `defaultPrice`/`defaultActive` — deliberately named
 "default" because the catalog array is never the live truth for price/active,
 only the starting point (see Shop Config below). Chase avatars are the 12
 most elaborate designs (angel/phoenix/dragon-rider/etc.), meant to be
-expensive and rotated rather than permanently purchasable (automatically, see
-Shop Config); two
-(`angel-knight-boy`, `phoenix-rider-girl`) default to always-active, the
-other 10 default off, waiting in the pool for a parent to rotate in via
-Manage Avatars. Standard tier spans free starters (4), a cheap "sticker" band
+expensive and rotated rather than permanently purchasable: 2 are in the store
+at a time, chosen automatically (see Shop Config). `defaultActive` on chase
+entries is no longer used by the rotation (angel-knight-boy and
+phoenix-rider-girl still carry `true`, historically).
+A parent can still pin any avatar in or out via Manage Avatars. Standard tier spans free starters (4), a cheap "sticker" band
 (20⭐, ~28 items), a mid costumed band (60⭐, ~24 items), and a small premium
 band (120⭐, 4 items) — see the comments above each price band in
 `shop-catalog.js` for the exact list; there's nothing enforcing these bands
@@ -183,16 +183,21 @@ beyond convention, a parent can set any price via Manage Avatars.
   device's cloud-refresh fetch can land after the first device's local edit
   and briefly revert it in the UI until the next fetch. Household-scale risk
   window, self-corrects, not worth a CRDT-style merge for this app.
-- **Automatic chase rotation (2026-10-04)**: chase avatars that aren't
-  always-up (`defaultActive: false`, 10 of them) take turns, `ROTATION_SLOTS`
-  (3) at a time, advancing every `ROTATION_DAYS` (14) from
-  `ROTATION_EPOCH_MS` (2026-10-04 UTC) in `js/app.js`. It is a pure function of
-  the date (`rotatingChaseIds`), so every device agrees with no sync and no
-  stored state; the full cycle is ~8 weeks. `effectiveCharacter()` uses the
-  rotation as the fallback where it used to use `defaultActive`, so an explicit
-  In Store override from Manage Avatars still wins and pins that avatar out of
-  the rotation (no UI yet to hand it back to rotation). Owned characters stay
-  owned when rotated out. Changing the epoch shifts every window.
+- **Automatic shop rotation (2026-10-04)**: every `ROTATION_DAYS` (14) the
+  store swaps in a new set — `CHASE_SLOTS` (2) chase avatars drawn from all 12
+  (so the old "always-up" chase pair now rotates too) plus `STANDARD_SLOTS`
+  (6) standard characters on top of the 4 always-up baseline
+  (`defaultActive: true`). Both pools use the same window so they switch
+  together. Implemented in `js/app.js` (`rotatingIds`, `pickRotating`,
+  `nextRotationDate`) as a pure function of the local calendar date from
+  `ROTATION_EPOCH` (window 1 began 2026-10-04), so every device agrees with no
+  sync or stored state; chase cycle is 6 windows (12 weeks), standard 57 pool
+  entries at 6 per window. The Star Shop shows "New characters arrive <date>"
+  (`#shop-rotation`). `effectiveCharacter()` uses the rotation as the fallback
+  where it used to use `defaultActive`, so an explicit In Store override from
+  Manage Avatars still wins and pins that avatar (no UI yet to hand it back to
+  rotation). Owned characters stay owned when rotated out. Changing the epoch
+  shifts every window.
 
 Source art resolution is the hard ceiling: figures are ~230-310px tall on the
 sheets, comfortable up to roughly 130-150 CSS px on a 2x screen and no

@@ -5230,34 +5230,56 @@
     return Math.floor(value);
   }
 
-  // Automatic chase rotation. Chase avatars that aren't always-up
-  // (defaultActive) take turns: ROTATION_SLOTS of them are in the store at a
-  // time, advancing every ROTATION_DAYS. It's a pure function of the date, so
-  // every device agrees with no sync and no stored state. A parent's explicit
-  // In Store checkbox in Manage Avatars still wins over the rotation.
-  const ROTATION_EPOCH_MS = Date.UTC(2026, 9, 4);
+  // Automatic rotation. Every ROTATION_DAYS the shop swaps in a new set:
+  // CHASE_SLOTS chase avatars (drawn from all of them) and STANDARD_SLOTS
+  // standard characters on top of the always-up baseline (defaultActive).
+  // It's a pure function of the calendar date, so every device agrees with
+  // no sync and no stored state. A parent's explicit In Store checkbox in
+  // Manage Avatars still wins over the rotation. The epoch is a local
+  // calendar day, so the switch happens at the viewer's midnight.
+  const ROTATION_EPOCH = [2026, 8, 20]; // window 1 starts 2026-10-04; next 10-18
   const ROTATION_DAYS = 14;
-  const ROTATION_SLOTS = 3;
+  const CHASE_SLOTS = 2;
+  const STANDARD_SLOTS = 6;
 
-  function rotationWindow(now) {
-    return Math.floor((now - ROTATION_EPOCH_MS) / (ROTATION_DAYS * 86400000));
+  function dayNumber(y, m, d) {
+    return Date.UTC(y, m, d) / 86400000;
   }
 
-  function rotatingChaseIds(now) {
-    const pool = ShopCatalog.CHARACTERS.filter((c) => c.tier === "chase" && !c.defaultActive);
+  function rotationWindow(now) {
+    const today = dayNumber(now.getFullYear(), now.getMonth(), now.getDate());
+    return Math.floor((today - dayNumber(...ROTATION_EPOCH)) / ROTATION_DAYS);
+  }
+
+  // Local-midnight date the current set gives way to the next one.
+  function nextRotationDate(now) {
+    const [y, m, d] = ROTATION_EPOCH;
+    return new Date(y, m, d + (rotationWindow(now) + 1) * ROTATION_DAYS);
+  }
+
+  function pickRotating(pool, slots, window) {
     const n = pool.length;
-    if (n === 0) return new Set();
-    const start = (((rotationWindow(now) * ROTATION_SLOTS) % n) + n) % n;
-    const ids = new Set();
-    for (let i = 0; i < Math.min(ROTATION_SLOTS, n); i++) ids.add(pool[(start + i) % n].id);
+    const ids = [];
+    if (n === 0) return ids;
+    const start = (((window * slots) % n) + n) % n;
+    for (let i = 0; i < Math.min(slots, n); i++) ids.push(pool[(start + i) % n].id);
     return ids;
+  }
+
+  function rotatingIds(now) {
+    const w = rotationWindow(now);
+    const chars = ShopCatalog.CHARACTERS;
+    return new Set([
+      ...pickRotating(chars.filter((c) => c.tier === "chase"), CHASE_SLOTS, w),
+      ...pickRotating(chars.filter((c) => c.tier !== "chase" && !c.defaultActive), STANDARD_SLOTS, w),
+    ]);
   }
 
   function effectiveCharacter(item, rotating) {
     const o = getShopConfigOverrides()[item.id] || {};
-    const rotationActive = item.tier === "chase" && !item.defaultActive
-      ? (rotating || rotatingChaseIds(Date.now())).has(item.id)
-      : item.defaultActive;
+    const rotationActive = item.tier === "chase" || !item.defaultActive
+      ? (rotating || rotatingIds(new Date())).has(item.id)
+      : true;
     return Object.assign({}, item, {
       price: sanitizePrice(o.price, item.defaultPrice),
       active: typeof o.active === "boolean" ? o.active : rotationActive,
@@ -5265,7 +5287,7 @@
   }
 
   function effectiveCharacters() {
-    const rotating = rotatingChaseIds(Date.now());
+    const rotating = rotatingIds(new Date());
     return ShopCatalog.CHARACTERS.map((c) => effectiveCharacter(c, rotating));
   }
 
@@ -5401,6 +5423,9 @@
   function renderShop() {
     const p = state.profile;
     document.getElementById("shop-lifetime").textContent = `All-time: ${p.lifetimeStars || 0} ⭐`;
+    const next = nextRotationDate(new Date());
+    document.getElementById("shop-rotation").textContent =
+      `🔄 New characters arrive ${next.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}`;
 
     const active = effectiveCharacters().filter((c) => c.active);
     const chaseItems = active.filter((c) => c.tier === "chase");
