@@ -5230,16 +5230,43 @@
     return Math.floor(value);
   }
 
-  function effectiveCharacter(item) {
+  // Automatic chase rotation. Chase avatars that aren't always-up
+  // (defaultActive) take turns: ROTATION_SLOTS of them are in the store at a
+  // time, advancing every ROTATION_DAYS. It's a pure function of the date, so
+  // every device agrees with no sync and no stored state. A parent's explicit
+  // In Store checkbox in Manage Avatars still wins over the rotation.
+  const ROTATION_EPOCH_MS = Date.UTC(2026, 9, 4);
+  const ROTATION_DAYS = 14;
+  const ROTATION_SLOTS = 3;
+
+  function rotationWindow(now) {
+    return Math.floor((now - ROTATION_EPOCH_MS) / (ROTATION_DAYS * 86400000));
+  }
+
+  function rotatingChaseIds(now) {
+    const pool = ShopCatalog.CHARACTERS.filter((c) => c.tier === "chase" && !c.defaultActive);
+    const n = pool.length;
+    if (n === 0) return new Set();
+    const start = (((rotationWindow(now) * ROTATION_SLOTS) % n) + n) % n;
+    const ids = new Set();
+    for (let i = 0; i < Math.min(ROTATION_SLOTS, n); i++) ids.add(pool[(start + i) % n].id);
+    return ids;
+  }
+
+  function effectiveCharacter(item, rotating) {
     const o = getShopConfigOverrides()[item.id] || {};
+    const rotationActive = item.tier === "chase" && !item.defaultActive
+      ? (rotating || rotatingChaseIds(Date.now())).has(item.id)
+      : item.defaultActive;
     return Object.assign({}, item, {
       price: sanitizePrice(o.price, item.defaultPrice),
-      active: typeof o.active === "boolean" ? o.active : item.defaultActive,
+      active: typeof o.active === "boolean" ? o.active : rotationActive,
     });
   }
 
   function effectiveCharacters() {
-    return ShopCatalog.CHARACTERS.map(effectiveCharacter);
+    const rotating = rotatingChaseIds(Date.now());
+    return ShopCatalog.CHARACTERS.map((c) => effectiveCharacter(c, rotating));
   }
 
   function setCharacterOverride(id, patch) {

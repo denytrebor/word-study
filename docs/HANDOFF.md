@@ -1,6 +1,6 @@
 # Word Study — Handoff Document
 
-_Last updated: 2026-09-02_
+_Last updated: 2026-10-04_
 
 A static PWA (no build step, no backend beyond Firebase) built for the user's kids
 to self-study their weekly spelling/vocab word lists. Live at
@@ -151,7 +151,8 @@ or `tier: "chase"`, plus `defaultPrice`/`defaultActive` — deliberately named
 "default" because the catalog array is never the live truth for price/active,
 only the starting point (see Shop Config below). Chase avatars are the 12
 most elaborate designs (angel/phoenix/dragon-rider/etc.), meant to be
-expensive and rotated rather than permanently purchasable; two
+expensive and rotated rather than permanently purchasable (automatically, see
+Shop Config); two
 (`angel-knight-boy`, `phoenix-rider-girl`) default to always-active, the
 other 10 default off, waiting in the pool for a parent to rotate in via
 Manage Avatars. Standard tier spans free starters (4), a cheap "sticker" band
@@ -182,11 +183,16 @@ beyond convention, a parent can set any price via Manage Avatars.
   device's cloud-refresh fetch can land after the first device's local edit
   and briefly revert it in the UI until the next fetch. Household-scale risk
   window, self-corrects, not worth a CRDT-style merge for this app.
-- No automatic calendar-based rotation was built — "rotate chase avatars on
-  a schedule" is presently a manual act (toggle checkboxes in Manage
-  Avatars), not a cron. If the user wants real scheduled rotation later,
-  that needs a start/end date pair per chase avatar checked at render time —
-  straightforward to add on top of this, deliberately not built speculatively.
+- **Automatic chase rotation (2026-10-04)**: chase avatars that aren't
+  always-up (`defaultActive: false`, 10 of them) take turns, `ROTATION_SLOTS`
+  (3) at a time, advancing every `ROTATION_DAYS` (14) from
+  `ROTATION_EPOCH_MS` (2026-10-04 UTC) in `js/app.js`. It is a pure function of
+  the date (`rotatingChaseIds`), so every device agrees with no sync and no
+  stored state; the full cycle is ~8 weeks. `effectiveCharacter()` uses the
+  rotation as the fallback where it used to use `defaultActive`, so an explicit
+  In Store override from Manage Avatars still wins and pins that avatar out of
+  the rotation (no UI yet to hand it back to rotation). Owned characters stay
+  owned when rotated out. Changing the epoch shifts every window.
 
 Source art resolution is the hard ceiling: figures are ~230-310px tall on the
 sheets, comfortable up to roughly 130-150 CSS px on a 2x screen and no
