@@ -2209,7 +2209,7 @@
     if (!name) { toast("Type a name first"); return; }
     updateLocalProfileFields(id, { name, grade });
     const updated = getProfiles().find((p) => p.id === id);
-    if (firestoreReady() && updated) Sync.pushProfile(updated);
+    if (firestoreReady() && updated) Sync.pushProfileIdentity(updated);
     toast("Saved");
     loadParentDashboard();
   }
@@ -5937,8 +5937,17 @@
     const btn = document.getElementById("btn-join-household");
     btn.disabled = true;
     try {
+      // Captured BEFORE joining: connecting replaces this device's roster with
+      // the class's, so anything built in "Skip — just use this device" mode
+      // would otherwise just disappear from the picker.
+      const localProfiles = getProfiles();
+      const localWeeks = sanitizeWeeks(load(catalogWeeksKey(LOCAL_CATALOG), []));
       const ok = await Sync.joinHousehold(code);
-      if (ok) { toast("Connected!"); enterApp(); }
+      if (ok) {
+        const moved = await migrateLocalIntoClass(localProfiles, localWeeks);
+        toast(moved ? `Connected! Moved ${moved} from this device into the class.` : "Connected!");
+        enterApp();
+      }
       else toast("That code wasn't found — check it and try again.");
     } catch (e) {
       toast("Couldn't connect — check your internet and try again.");
@@ -5946,6 +5955,47 @@
       btn.disabled = false;
     }
   });
+
+  // Carries a roster / word lists built locally into a class that has NOTHING
+  // yet. It never merges into a class that already has students — a family
+  // device with its own profiles joining someone else's class must not copy its
+  // children into it — and never overwrites an existing class word list.
+  // Practice history from local mode is not moved (a class built in local mode
+  // has none worth keeping); stars on the student records do travel.
+  async function migrateLocalIntoClass(localProfiles, localWeeks) {
+    try {
+      const remote = await Sync.fetchHouseholdProfiles(Sync.getHouseholdCode());
+      if (!Array.isArray(remote)) return "";
+      if (remote.some((p) => p.role !== "parent")) return "";
+      const toMove = localProfiles.filter((p) => p && p.id && !remote.some((r) => r.id === p.id));
+      let students = 0;
+      for (const p of toMove) {
+        await Sync.pushProfile(p);
+        if (p.role !== "parent") students++;
+      }
+      let weeks = 0;
+      if (localWeeks.length) {
+        let cat = Sync.getCatalogCode();
+        if (!cat) {
+          try { cat = await Sync.fetchHouseholdCatalogCode(); } catch (e) { cat = null; }
+          if (cat) Sync.cacheCatalogCode(cat);
+        }
+        if (!cat) {
+          cat = generateCode(10);
+          await Sync.connectCatalog(cat);
+          await Sync.saveCatalogWeeks(cat, localWeeks);
+          save(catalogWeeksKey(cat), localWeeks);
+          weeks = localWeeks.length;
+        }
+      }
+      const bits = [];
+      if (students) bits.push(`${students} student${students === 1 ? "" : "s"}`);
+      if (weeks) bits.push(`${weeks} word-list week${weeks === 1 ? "" : "s"}`);
+      return bits.join(" and ");
+    } catch (e) {
+      return ""; // the join itself worked — never fail it because the carry-over couldn't finish
+    }
+  }
 
   document.getElementById("btn-toggle-household-code").addEventListener("click", () => {
     const input = document.getElementById("join-household-code");

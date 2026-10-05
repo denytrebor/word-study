@@ -111,7 +111,10 @@ const Sync = (function () {
     if (!snap.exists) return false;
     setHouseholdCode(clean);
     const data = snap.data();
+    // A class with no catalog of its own must not inherit the one this device
+    // used before (e.g. a family's) — that silently showed the wrong words.
     if (data.catalogCode) localStorage.setItem(CATALOG_KEY, data.catalogCode);
+    else localStorage.removeItem(CATALOG_KEY);
     return true;
   }
 
@@ -224,6 +227,20 @@ const Sync = (function () {
       weekTrophies: profile.weekTrophies || {}, streakShields: profile.streakShields || 0,
     }, { merge: true }).catch(warnWriteFailed("student " + profile.id));
     return Promise.all([enrollmentWrite, studentWrite]);
+  }
+
+  // Name/grade edits from the teacher dashboard. pushProfile() above writes the
+  // WHOLE student record from the caller's local copy, so editing a child's
+  // grade from a stale dashboard used to overwrite stars/streak/unlocks that
+  // the child's own device had since advanced. This writes only the identity
+  // fields, and merge:true leaves everything else alone.
+  async function pushProfileIdentity(profile) {
+    const ref = profileRef(profile.id);
+    if (!ref || !(await ready)) return;
+    const writes = [ref.set({ grade: profile.grade || "" }, { merge: true }).catch(warnWriteFailed("enrollment " + profile.id))];
+    const sRef = studentRef(profile.id);
+    if (sRef) writes.push(sRef.set({ name: profile.name || "" }, { merge: true }).catch(warnWriteFailed("student " + profile.id)));
+    return Promise.all(writes);
   }
 
   // The app's first and only delete. It may ONLY ever be pointed at a
@@ -588,7 +605,7 @@ const Sync = (function () {
     getHouseholdCode,
     createHousehold,
     joinHousehold,
-    pushProfile,
+    pushProfile, pushProfileIdentity,
     deleteParentProfile,
     fetchHouseholdCatalogCode,
     watchProfiles,
