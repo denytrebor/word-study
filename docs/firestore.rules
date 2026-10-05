@@ -1,11 +1,10 @@
 // Firestore security rules for the Word Study app.
 //
-// STATUS: the families-only version of these rules (tools/rules-tests/
-// firestore.rules.v1-live-2026-10-05) is what is published in the Firebase
-// console today. THIS file adds the school-class model and is NOT published
-// until the owner has run `npm test` in tools/rules-tests and pasted it into
-// Firebase console -> Firestore Database -> Rules -> Publish. Save the
-// currently published text first (the console also keeps a rules history).
+// STATUS: PUBLISHED 2026-10-05 (school-class model added). The previous
+// families-only text is tools/rules-tests/firestore.rules.v1-live-2026-10-05;
+// the console also keeps a rules history. After any change: run `npm run test:all`
+// in tools/rules-tests, paste into Firebase console -> Firestore -> Rules ->
+// Publish, then run `python tools/verify-live-rules.py`.
 //
 // ---------------------------------------------------------------------------
 // TWO ACCESS MODELS, ONE DATABASE

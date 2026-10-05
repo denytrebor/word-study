@@ -4,12 +4,12 @@ Design and limits: `docs/school-accounts.md`. Everything is one Firebase project
 
 ## A. Only you can do these
 
-1. **Run the tests, then publish the new rules.** `cd tools/rules-tests && npm install --legacy-peer-deps && npm run test:all`
+1. ✅ **DONE 2026-10-05 — rules published and verified live (20/20 read-only checks).** *(Kept for reference:)* Run the tests, then publish the new rules. `cd tools/rules-tests && npm install --legacy-peer-deps && npm run test:all`
    must show 73 + 20 passing. Then: Firebase console → Firestore → Rules → copy the **current** text somewhere safe →
    paste `docs/firestore.rules` → Publish. Immediately open the family app and practise a word (family behaviour is
    unchanged and covered by the tests). *To roll back: republish the saved text.* I (Claude) can test and read but
    cannot publish rules for you.
-2. **Deploy the app to both hosts** (after merging the branch): push for GitHub Pages, then
+2. ✅ **DONE 2026-10-05 — both hosts serve the school build.** *(Kept for reference:)* Deploy the app to both hosts: push for GitHub Pages, then
    `python tools/stage-cloudflare.py && npx wrangler deploy` for `wordstudy.trebor.me`. Cards always point at
    `https://wordstudy.trebor.me`, so that host must have the school version before any card is printed.
 3. ✅ Region: **nam5** (US multi-region). **No scheduled backups** (Spark plan; needs Blaze) — decide whether that is
