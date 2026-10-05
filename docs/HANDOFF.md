@@ -1761,3 +1761,21 @@ Also note: local HTTP caching bit twice more here. When verifying a change in
 the browser, `fetch(url, {cache:'reload'})` for each changed asset before
 reloading — unregistering the service worker alone is not enough, and a stale
 `app.js` looks exactly like a fix that did not work.
+
+## Second deployment: https://wordstudy.trebor.me (2026-10-04)
+
+The app is also served from Cloudflare (static assets Worker `word-study`, config in
+`wrangler.jsonc`) so it can be shared on the owner's own domain. **GitHub Pages
+(denytrebor.github.io/word-study) is still live and untouched** — the kids' installed
+copies keep working. Both talk to the same Firebase project, so a household code works
+on either; browser storage (`localStorage`) is per-origin, so a device that switches
+origin must rejoin with its household code (data comes back from Firestore).
+
+- Deploy: `python tools/stage-cloudflare.py && npx wrangler deploy` (the stage script
+  whitelists the shippable files into `.cf-dist/`; experiments/docs/Temp never upload).
+- A push to `master` updates GitHub Pages automatically; **Cloudflare is a separate manual
+  deploy** — redeploy it after site changes or the two copies drift. Bump `CACHE_NAME`
+  in `service-worker.js` as usual.
+- Auth: `wrangler` is logged in via OAuth (`wrangler login`) as the calendar project's
+  Cloudflare account. The OAuth token can create Worker custom domains (which creates
+  the DNS record) but has no general DNS-edit scope.

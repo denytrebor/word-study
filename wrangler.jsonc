@@ -1,0 +1,20 @@
+{
+  // Second home for Word Study: https://wordstudy.trebor.me, served by
+  // Cloudflare (static assets, no Worker code). The original GitHub Pages site
+  // (denytrebor.github.io/word-study) is untouched and keeps working, so the
+  // kids' installed copies are unaffected. Same Firebase backend, same code.
+  //
+  // Deploy:  python tools/stage-cloudflare.py && npx wrangler deploy
+  // (stage-cloudflare.py copies ONLY the site files into .cf-dist/, so the
+  // experiments/, docs/, Temp/ folders and the zip never get uploaded.)
+  "name": "word-study",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./.cf-dist"
+  },
+  // Creates the DNS record for the hostname as part of the deploy.
+  "routes": [{ "pattern": "wordstudy.trebor.me", "custom_domain": true }],
+  // Serve ONLY on the custom domain (same reasoning as family-organizer).
+  "workers_dev": false,
+  "preview_urls": false
+}
