@@ -8,16 +8,17 @@ official assignment.
 follows the teacher's activity. If a name or word list looks wrong, they stop and tell the teacher. They never add a
 new profile.
 
-**At home (optional).** Scan the QR code below, or open **wordstudy.trebor.me/?household=______**, tap **Join**, then tap
-your child's name and **"Yes, this is me."** There is no account, email or password. If the app ever asks you to
-"create a household", stop and contact **[owner contact]** — joining is all that is needed.
+**At home.** *[Home access is switched on only after the school-account update ships — see `experiments/accounts-design`
+reviews. Until then, children practise at school on the class devices.]* When it is available, each child gets a personal
+card with a QR code (like a library card); scanning it at home opens that child's practice only. **Do not send or post the
+class code to families** — it opens the whole class, and an earlier draft of this handout wrongly included it.
 
 **What the app stores.** Your child's first name (or the nickname the school chooses), grade, a cartoon avatar, practice
 scores, stars and streaks, and up to three recent misspellings per word. It does **not** collect email addresses,
 birthdates, photos or location, and there are no ads. Data is stored with Google Firebase and on the device.
 
-**Shared class code.** The class uses one shared code, like a classroom key: anyone who has it can see the class's first
-names and scores. Please **do not post or forward** the code or QR outside your family.
+**Cards.** Each child's card is like a key to just their own practice. Please keep it safe; if it is lost, the teacher
+replaces it and the old one stops working.
 
 **Microphone.** The app has an optional "say the word" button. It sends audio to the device's speech service (Apple or
 Google). **[The school will decide whether to turn this off for the pilot.]**
