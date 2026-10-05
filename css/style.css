@@ -410,7 +410,7 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
 .result-row.clickable:active { transform: scale(0.98); }
 
 /* INPUTS */
-input[type="text"], input[type="password"], textarea {
+input[type="text"], input[type="password"], input[type="number"], textarea {
   width: 100%;
   padding: 14px;
   border-radius: 14px;
@@ -420,7 +420,7 @@ input[type="text"], input[type="password"], textarea {
   background: white;
   color: #1f2333; /* fixed: the field is always white, and Galaxy's --text is near-white */
 }
-input[type="text"]:focus, input[type="password"]:focus, textarea:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
+input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus, textarea:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
 
 /* HOME MENU */
 .week-label { text-align: center; margin-bottom: 2px; }

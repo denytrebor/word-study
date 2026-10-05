@@ -16,9 +16,8 @@ const JWKS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken
 const ALLOWED_ORIGINS = new Set([
   "https://wordstudy.trebor.me",
   "https://denytrebor.github.io",
-  "http://localhost:8000",
-  "http://127.0.0.1:8000",
 ]);
+const originOk = (o) => ALLOWED_ORIGINS.has(o) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o);
 const CLAUDE_MODEL = "claude-sonnet-5-5";
 const FALLBACK_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct";
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
@@ -75,7 +74,7 @@ const hourly = new Map(); // best-effort, per isolate
 function cors(req) {
   const origin = req.headers.get("Origin");
   const h = { "Vary": "Origin" };
-  if (origin && ALLOWED_ORIGINS.has(origin)) {
+  if (origin && originOk(origin)) {
     h["Access-Control-Allow-Origin"] = origin;
     h["Access-Control-Allow-Headers"] = "Authorization, Content-Type";
     h["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
@@ -202,7 +201,7 @@ function clean(result) {
 
 async function extract(req, env) {
   const origin = req.headers.get("Origin");
-  if (origin && !ALLOWED_ORIGINS.has(origin)) return json(req, { error: "origin" }, 403);
+  if (origin && !originOk(origin)) return json(req, { error: "origin" }, 403);
   const uid = await verifyFirebaseToken(req);
   if (!uid) return json(req, { error: "auth" }, 401);
   if (overLimit(uid)) return json(req, { error: "limit" }, 429);

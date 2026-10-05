@@ -14,13 +14,12 @@ Design and limits: `docs/school-accounts.md`. Everything is one Firebase project
    `https://wordstudy.trebor.me`, so that host must have the school version before any card is printed.
 3. ✅ Region: **nam5** (US multi-region). **No scheduled backups** (Spark plan; needs Blaze) — decide whether that is
    acceptable for the pilot; deletion is permanent.
-4. **App Check** (free) — not enabled; needs a code change + reCAPTCHA, and a mistake can lock the app out, so do it as its
+4. **Turn on the word-list reader (one command, ~2 minutes).** Photo/paste entry runs through our Cloudflare Worker. It works without any setup using a weak free reader; for accurate reading, give it a Claude key: create an API key at console.anthropic.com (set a monthly spend limit, e.g. $10; a scan costs roughly 1-2 cents), then in this folder run `npx wrangler secret put ANTHROPIC_API_KEY` and paste it. No redeploy needed. Check: the teacher screen no longer says "Basic reader in use". Never put the key in the code or chat.
+4b. **App Check** (free) — not enabled; needs a code change + reCAPTCHA, and a mistake can lock the app out, so do it as its
    own step later. It stops scripts from burning the free daily quota.
 5. **Retire the old family catalog name.** Your family catalog code is the school's name and was visible in old code
    comments. The class uses its own random catalog automatically; move the family to a new random code when convenient.
-6. **Write down how a child's data is deleted** (no in-app delete yet): Firebase console → remove
-   `classes/{cid}/profiles/{sid}` (+ its `progress` and `activity` docs), `students/{sid}`, and the hashed
-   `studentCodes` docs listed in `classes/{cid}/cards/{sid}`.
+6. ✅ **Deleting a child is now in the app:** Teacher Dashboard → ✏️ the child → **🗑 Remove student** (tap twice). It deletes the card, devices, progress, activity and records. Use it when a family asks. No backups exist, so it is permanent.
 7. **School approval** of `data-sheet.md` and `parent-handout.md` *before* enrolling children; ask `school-questions.md`.
 8. **Print and laminate** the setup sheet (keys) and the student cards; store the teacher key like a password.
 9. Use only `https://wordstudy.trebor.me` for the school.
@@ -32,7 +31,7 @@ Design and limits: `docs/school-accounts.md`. Everything is one Firebase project
 2. You land on the **teacher dashboard**. **Add Students**: paste one child per line (`Maya R.` or `Maya R., 3`; blank
    grade = the class grade). **Print the cards now**: each child gets a *student card* (stays at school) and a
    *parent code* (goes home). The codes exist only on that sheet (**🪪 Print new cards** reopens it until you tap Done).
-3. **📝 Word Lists**: paste the first 4-6 weeks (see `ai-word-list-prompt.md`), check the preview, Save.
+3. **📝 Word Lists → ✨ Add a week's words**: photograph the paper list (or paste it), tap Read it, compare with the page, Preview, Save. (`ai-word-list-prompt.md` is only a fallback for pasting through a chat assistant.)
 4. **Each shared class tablet/Chromebook:** open the site → School or classroom → **Set up a shared class device** →
    scan/type the class-device key. It goes straight to the class's current week; no student list.
 5. **A child's own device:** scan their card (or open the QR link, or type the code).

@@ -1799,3 +1799,31 @@ origin must rejoin with its household code (data comes back from Firestore).
   treated like a business pilot. Pain point: getting weekly words in. Independent
   reviews (Opus + Codex) live in `experiments/classroom-poc/` (not committed); the
   resulting change list is tracked in the session notes / follow-up commits.
+
+## Session log 2026-10-05 (teacher word entry rebuilt, Phase 1 teacher tools)
+
+- **Tesseract OCR removed.** It could not read real workbook pages. Replacement: the Cloudflare Worker
+  (`worker/index.js`, bound in `wrangler.jsonc` with `main`, `ASSETS`, `AI`, `run_worker_first: ["/api/*"]`) exposes
+  `POST /api/extract-words` (`{images:[dataUrl], text}` -> `{weeks:[{week,verse,spelling[],vocabulary[]}], unsure[], engine}`)
+  and `GET /api/extract-status`. Callers present a Firebase anonymous ID token (verified in the Worker via Google's JWKS;
+  audience/issuer checked); best-effort 40 requests/hour/uid; origins limited to the two hosts + localhost.
+- **Engines.** `ANTHROPIC_API_KEY` secret set -> Claude vision (`claude-sonnet-5-5`, effort low, JSON-schema output;
+  a prompt that forbids inventing definitions or "fixing" words). Not set -> Workers AI `llama-4-scout` (free plan; the
+  better models are paid-plan only). **Measured on the real Abeka/Pensacola photos in `Temp/`:** scout reads sideways
+  pages and the numbered lists but misspells words, misaligns definitions and sometimes invents them (qwen3.8-27b read the
+  definitions accurately but took 71s and missed half the page; mistral-small was worse). So the fallback is a stopgap
+  and the UI says "Basic reader in use — check every word"; the Claude key (owner step, see owner-checklist) is the real fix.
+  I have not yet been able to run the Claude path end to end (no key in this environment).
+- **Teacher UI** (word-list editor, `index.html` `#quick-add-panel`, `js/app.js` "Quick add"): Grade + Week # (defaulting
+  to the next week), photos (up to 4, EXIF-oriented, downscaled to 2000px) and/or pasted text, **Read it**. It only fills
+  the existing paste box (via `extractionToPaste`, the term start date is derived from the grade's existing weeks, or makes
+  this Monday the week being added), photos stay on screen (tap to enlarge) beside it, doubts are listed, and the existing
+  Preview -> Save -> Undo flow still gates every save. `tools/tests/quickadd-test.js` checks the round trip through
+  `parseCatalogText`. Privacy page + pilot data sheet disclose that the photo/text goes to Anthropic via our Worker.
+- **Remove student** (permanent, two taps, `Sync.removeStudent`): deletes codes, bound devices, class profile/progress/
+  activity, global student record. No rule change was needed; 2 new cases in `tools/rules-tests/sync-integration.js`
+  (22 passing). **Class summary CSV** from the loaded dashboard (spreadsheet-injection safe).
+- Not done / owner: Claude API key secret, App Check, school approval, rehearsal on real devices, backups decision.
+  Parked: teacher "hold this week", transfer to next year's class, class-device naming.
+- Run the rules suite from bash with the JRE on PATH:
+  `export PATH="$PWD/tools/.jre/jdk-*/bin:$PATH"` then `node run.js sync-integration.js` (tools/rules-tests).
