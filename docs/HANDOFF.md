@@ -1779,3 +1779,23 @@ origin must rejoin with its household code (data comes back from Firestore).
 - Auth: `wrangler` is logged in via OAuth (`wrangler login`) as the calendar project's
   Cloudflare account. The OAuth token can create Worker custom domains (which creates
   the DNS record) but has no general DNS-edit scope.
+
+## Session log 2026-10-04 (avatars, UX fixes, classroom pilot)
+
+- **28 new characters** (8 chase + 20 standard) added to `CHARACTERS` with
+  `inRotation: false`: they are in the catalog and in Manage Avatars but the automatic
+  rotation (`rotatingIds` in `app.js`) skips them, so the storefront did not change.
+  Remove the flag to fold them into rotation (that reshuffles the schedule).
+  Art was generated with Codex; see the commit history for the batch.
+- **UX fixes** from an independent Codex review (verified against the code first):
+  first spoken word no longer cancelled by `showScreen` (`lastSpeakAt`), shop only dims
+  unaffordable items and shows spendable stars, orange `.btn-round`/badge contrast,
+  fixed input/toast colours (Galaxy theme), Check hidden after retype lock-in, empty
+  Check is not a miss. Still open from that review: UX-06 (editing a week regenerates
+  word ids and can reset progress), UX-07 (Test Mode leaks reward signals), UX-27
+  (Word Scramble tap/keyboard), plus owner-decision items (home redesign, medal rules,
+  goal counting, mic dictation, shared-iPad mode).
+- **Classroom pilot at Zoe Live** (the owner's children's school) is planned: one class,
+  treated like a business pilot. Pain point: getting weekly words in. Independent
+  reviews (Opus + Codex) live in `experiments/classroom-poc/` (not committed); the
+  resulting change list is tracked in the session notes / follow-up commits.
