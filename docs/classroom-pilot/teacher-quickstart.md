@@ -1,24 +1,27 @@
 # Word Study — Quick-Start for the teacher
 
-Your class is already set up and your weekly words are loaded for you. Paper lists are still the official assignment;
-this is extra practice. Questions or something looks wrong? **[owner name / phone / email]**
+Your class is set up and your weekly words are loaded for you. Paper lists are still the official assignment; this is
+extra practice. Something wrong? **[owner name / phone / email]**
 
-**Open it:** go to **wordstudy.trebor.me** in Safari or Chrome (the same address every time).
+**Open it:** **wordstudy.trebor.me** in Safari or Chrome (the same address every time).
 
-1. If it asks for a code, choose **Join** and type your class code from your setup card: **______**
-   (Never tap *Create a New Household* or *Skip* on a class device.)
-2. You will see your students' names. Under them, tap **🔒 your name** and enter your PIN: **____**.
-   That is your **Teacher Dashboard** (the PIN just keeps curious kids out).
-3. The dashboard lists every student; those who haven't practised are at the **top**. Tap a name to see which words
-   they miss. **"This week's hardest words"** shows what to review in class.
-4. **📝 Word Lists** shows the week's words. To fix a typo: tap **✏️ Edit** on that week, change it, **Preview**
-   (tap *Check the words*), **Save**. Children's progress is kept. Made a mistake? **↩️ Undo the last save**.
-5. **➕ Add Students** adds a new child (one name per line, e.g. `Maya R., 3`).
-6. **🏫 Class Info** shows the class code and QR for printing.
-7. **Class iPads/Chromebooks:** they are set to **Shared device** — each child taps their own name, then
-   **"Yes, this is me."** When finished, the child taps **🔀** (top right) so the next child can choose.
-8. **At home:** the handout has a QR code. Parents scan it, tap **Join**, then their child taps their name.
-   A lost login is fixed the same way — nothing is lost.
-9. Something wrong (wrong name, wrong words, a child can't start)? **Stop on that device**, use the paper list, and
-   message the owner. Please don't create new profiles.
-10. **Fridays:** note your class's spelling-test average — that is how we'll know if this is helping.
+1. **Your teacher device:** open the site → **🏫 School or classroom** → **I'm a teacher** → tap **I already have a teacher
+   key** → scan the QR on your key sheet (or type the key). You'll see your **Teacher Dashboard**. Keep the key sheet private.
+2. The dashboard shows each student. Those who haven't practised are at the **top**. Tap ✏️ on a student for their name,
+   grade — and **🪪 Issue a new card** (see step 7). **"This week's hardest words"** shows what to review in class.
+3. **➕ Add Students** — one name per line (add a last initial for duplicates). Then **print the cards** (each child gets a
+   student card and a separate parent code). Print before you tap Done — the codes aren't saved anywhere else.
+4. **📝 Word Lists** — fix a typo with **✏️ Edit → Preview → Save**; children's progress is kept. **↩️ Undo the last save**
+   if you slip.
+5. **Shared class tablets/Chromebooks** (the owner sets these up with the class-device key): children just open the app
+   and practise this week's words. These devices don't know who is using them and never show a list of students; the
+   dashboard shows how much each device was used. If you want to track an individual child, they need their own device.
+6. **A child with their own device:** they scan their card (or tap the link) and tap "That's me!". Practice is saved to
+   them and you see it on your dashboard. At home, parents scan the **parent code** for a read-only view.
+7. **Lost card, new device, or a child can't get in?** Dashboard → ✏️ the child → **🪪 Issue a new card** (tap twice to
+   confirm), print it, and give it to the child. The old card and every device that used it stop working; the child's stars
+   and progress are kept. Only hand a card to the child you recognise.
+8. **Class tools** (top of the dashboard) lists your class devices (remove any you no longer use) and can make another teacher key or
+   class-device key. **Never share the teacher key or put cards on a wall.**
+9. Anything odd? Use the paper list for that day and message the owner. Please don't create a second class.
+10. **Fridays:** note your class's spelling-test average — that is how we'll know if this helps.

@@ -9,7 +9,7 @@ takes over weekly entry with the same prompt, owner reviewing. Paper lists remai
 | When | Who | What |
 |---|---|---|
 | **Week −2** | Owner | Ask `school-questions.md`. Get written approval of `data-sheet.md` and `parent-handout.md`. Do part A of `owner-checklist.md` (rules, App Check, region, deletion procedure, privacy page). Deploy and freeze code. |
-| **Week −1** | Owner | Create the synced class, roster, teacher profile, private word list, 4–6 weeks of words/verses (part B). Join every class device and set **Shared device**. Rehearse (part C) with two test children on the school's real devices and Wi-Fi. Print the setup card, QR sheet and handouts. |
+| **Week −1** | Owner | Create the synced class, roster, teacher profile, private word list, 4–6 weeks of words/verses (part B). Enrol every shared class device with the class-device key (and rehearse a child card + a parent code). Rehearse (part C) with two test children on the school's real devices and Wi-Fi. Print the setup card, QR sheet and handouts. |
 | **Day 1** (owner present, ~25 min) | Owner + teacher | Kids find their name → "Yes, this is me" → *This Week's Words* → *Look & Say* → *Spelling Practice* for 5 min → 2 min Star Shop → show **🔀 switch child** → handout goes home. Teacher counts children on the right profile/list. Stop if the wrong words appear. |
 | **Week 1** | Owner | Check the dashboard daily; send the teacher a two-line summary; 10-minute check-in on day 3; 15-minute retro on Friday. Compare dashboard samples with what the teacher observed. |
 | **Weeks 2–3** | Teacher + owner | 3 short sessions a week; owner delivers next week's list by Friday; try one real typo fix and one new-student add together. |

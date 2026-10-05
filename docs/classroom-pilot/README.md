@@ -29,6 +29,12 @@ goes wrong with data, and the principal sees enough to say "roll it out."
 - Grades like "3rd"/"Grade 3" are stored as "3"; a child whose grade has no list is told when they see another
   grade's words; the photo-scan library no longer loads on children's devices.
 
+## School accounts (branch `school-accounts`) — supersedes the household-based class setup above
+Per-device access: teacher devices, shared class devices (no student list), child cards, read-only parent codes, and
+teacher-issued **replacement cards** for recovery. Design, limits and tests: `docs/school-accounts.md`. The owner must
+publish `docs/firestore.rules` (see `owner-checklist.md`) before any class is created. The older "household as a class"
+setup described in the early drafts is no longer the recommended path for the school.
+
 ## Known gaps still open (decide / schedule)
 - Kids can still reach Manage Word Catalog / starter lists from their own Home screen (a "class mode" that hides
   adult controls from kids is the next engineering item; the dashboard buttons now make that safe to build).

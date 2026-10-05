@@ -6217,7 +6217,7 @@
     setSchoolStatus("Checking…");
     try {
       if (norm.length === 16) {
-        const s = await Sync.redeemKey(norm, defaultDeviceLabel());
+        const s = await Sync.redeemKey(norm, defaultDeviceLabel() + " " + Sync.randomCode(2)); // e.g. "iPad K7": tells devices apart on the dashboard
         if (!s) { setSchoolStatus("That key isn't recognised. Check it and try again."); return; }
         applyClassModeUI();
         toast(s.mode === "staff" ? `Teacher device ready — ${s.name}` : `Class device ready — ${s.name}`);
