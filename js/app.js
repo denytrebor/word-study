@@ -162,10 +162,17 @@
   function getSavedVoiceURI() { return localStorage.getItem(VOICE_KEY) || ""; }
   function setSavedVoiceURI(uri) { localStorage.setItem(VOICE_KEY, uri); }
 
+  // When the last prompt was queued. showScreen() cancels stale speech, but
+  // every mode's open function renders (and speaks its first word) BEFORE it
+  // calls showScreen — so without this the screen change cancelled the very
+  // word it had just started, and a child opened a mode to silence.
+  let lastSpeakAt = 0;
+
   function speak(text) {
     if (!("speechSynthesis" in window) || !text) return;
     try {
       window.speechSynthesis.cancel();
+      lastSpeakAt = Date.now();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 0.85;
       u.pitch = 1;
@@ -284,7 +291,9 @@
     endRetype();
     clearBuddy();
     window.scrollTo(0, 0);
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    // Skip the cancel when a prompt was queued moments ago by this same
+    // navigation (see lastSpeakAt); anything older is stale and must stop.
+    if (window.speechSynthesis && Date.now() - lastSpeakAt > 250) window.speechSynthesis.cancel();
     // A screen-reader/keyboard user gets no signal that navigation happened —
     // the DOM swap above is silent to assistive tech otherwise. Every screen
     // opens with an h1/h2 (see index.html), so that's a reliable, sensible
@@ -3443,6 +3452,7 @@
     feedback.textContent = "🔒 Got it — nice job locking that in!";
     input.disabled = true;
     document.getElementById(prefix + "-continue").classList.remove("hidden");
+    document.getElementById(prefix + "-submit").classList.add("hidden");
     playSound("lockin");
     reactBuddy("correct");
     endRetype();
@@ -3573,6 +3583,7 @@
     if (handleRetypeSubmit()) return;
     const item = reviewSession.queue[reviewSession.index];
     const answer = document.getElementById("review-input").value.trim();
+    if (!answer) { document.getElementById("review-input").focus(); return; } // tapped Check before typing — not a miss
     const correct = normalizeSpelling(answer) === normalizeSpelling(item.word.text);
     const result = recordAnswer(item.word, correct, "spelling", { streakStep: reviewSession.streak + 1 });
     trackSessionResult(reviewSession, item.word, result);
@@ -4167,6 +4178,7 @@
     recordModeStart("spelling");
     renderSpelling();
     showScreen("spelling");
+    document.getElementById("spell-input").focus();
   }
 
   function renderSpelling() {
@@ -4193,6 +4205,7 @@
     if (handleRetypeSubmit()) return;
     const w = spell.queue[spell.index];
     const answer = document.getElementById("spell-input").value.trim();
+    if (!answer) { document.getElementById("spell-input").focus(); return; } // tapped Check before typing — not a miss
     const correct = normalizeSpelling(answer) === normalizeSpelling(w.text);
     const canPay = !offGradeWeek();
     const result = recordAnswer(w, correct, "spelling",
@@ -5389,7 +5402,7 @@
     const cls = ["shop-item"];
     if (equipped) cls.push("equipped");
     else if (owned) cls.push("owned");
-    else cls.push("locked");
+    else if (!affordable) cls.push("locked"); // an item you can buy must not look disabled
     if (legendary) cls.push("legendary");
     const btn = document.createElement("button");
     btn.className = cls.join(" ");
@@ -5424,7 +5437,7 @@
 
   function renderShop() {
     const p = state.profile;
-    document.getElementById("shop-lifetime").textContent = `All-time: ${p.lifetimeStars || 0} ⭐`;
+    document.getElementById("shop-lifetime").textContent = `You have ${p.stars || 0} ⭐ to spend · All-time: ${p.lifetimeStars || 0} ⭐`;
     const next = nextRotationDate(new Date());
     document.getElementById("shop-rotation").textContent =
       `🔄 New characters arrive ${next.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}`;

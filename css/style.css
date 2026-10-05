@@ -184,7 +184,9 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
 .btn-success { background: var(--success-bg); color: var(--success); }
 .btn-danger { background: var(--danger-bg); color: var(--danger); }
 .btn-round {
-  background: var(--accent);
+  /* Fixed, not theme --accent: white on the default orange was 2.3:1 and
+     worse on most themes. #c2410c is 5.2:1 and keeps the orange identity. */
+  background: #c2410c;
   color: white;
   border-radius: 999px;
   padding: 14px 28px;
@@ -244,6 +246,7 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
   min-width: 0;
 }
 .change-week-btn {
+  display: block; /* inline-block ignored the auto margins and sat left-aligned */
   max-width: 280px;
   margin: 0 auto 20px;
 }
@@ -407,7 +410,7 @@ h2 { font-size: 1.5rem; margin-bottom: 6px; }
 .result-row.clickable:active { transform: scale(0.98); }
 
 /* INPUTS */
-input[type="text"], textarea {
+input[type="text"], input[type="password"], textarea {
   width: 100%;
   padding: 14px;
   border-radius: 14px;
@@ -415,9 +418,9 @@ input[type="text"], textarea {
   font-size: 1rem;
   font-family: inherit;
   background: white;
-  color: var(--text);
+  color: #1f2333; /* fixed: the field is always white, and Galaxy's --text is near-white */
 }
-input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
+input[type="text"]:focus, input[type="password"]:focus, textarea:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
 
 /* HOME MENU */
 .week-label { text-align: center; margin-bottom: 2px; }
@@ -1092,7 +1095,7 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   min-width: 22px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: var(--accent, #ea580c);
+  background: #c2410c; /* white text — see .btn-round */
   color: #fff;
   font-size: 0.72rem;
   font-weight: 800;
@@ -1112,7 +1115,8 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
   left: 50%;
   bottom: 30px;
   transform: translateX(-50%) translateY(20px);
-  background: var(--text);
+  background: #1f2333; /* fixed: Galaxy's --text is near-white, which hid the white toast text */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
   color: white;
   padding: 12px 22px;
   border-radius: 999px;
@@ -1127,6 +1131,8 @@ input[type="text"]:focus, textarea:focus { outline: 2px solid var(--primary); bo
 
 @media (min-width: 480px) {
   .menu-grid { grid-template-columns: repeat(3, 1fr); }
+  /* Two-choice pickers (Vocab / Test) fill their row instead of leaving a gap. */
+  #vocab-setup-grid, #screen-test-setup .menu-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* PRACTICE BUDDY
