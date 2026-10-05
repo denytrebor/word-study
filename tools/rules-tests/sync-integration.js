@@ -198,6 +198,19 @@ function newDevice(uid) {
     await rejects(s.Sync.replaceCard(kidB.sid), "forged staff replaced a card");
   });
 
+  await t("REMOVE: teacher deletes Maya - card, devices, progress, records gone; Ben untouched", async () => {
+    const r = await owner.Sync.removeStudent(kidA.sid);
+    if (!(r.progress >= 1)) throw new Error("expected progress docs deleted, got " + JSON.stringify(r));
+    eq((await newDevice("late-2").Sync.redeemCard(kidB.childCode)) !== null, true);
+    eq(await newDevice("late-3").Sync.redeemCard(kidA.childCode), null);
+    eq((await owner.db.doc("students/" + kidA.sid).get()).exists, false);
+    eq((await owner.db.collection("classes/" + made.cid + "/profiles/" + kidA.sid + "/progress").get()).size, 0);
+  });
+  await t("a stranger's forged staff session can not remove students", async () => {
+    const s = newDevice("stranger-4"); s.Sync.setClassSession({ cid: made.cid, mode: "staff" });
+    await rejects(s.Sync.removeStudent(kidB.sid), "forged staff removed a student");
+  });
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) console.log("FAILED:\n - " + failures.join("\n - "));
   await testEnv.cleanup();

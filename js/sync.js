@@ -828,6 +828,47 @@ const Sync = (function () {
     return { sid, childCode, parentCode, revokedDevices: devs.docs.length };
   }
 
+  // Teacher: permanently remove a student from the class and delete everything
+  // stored about them (card + parent code, bound devices, class profile,
+  // progress, activity, the global student record). Codes go first so the card
+  // stops working immediately; each step is retry-safe if the connection drops.
+  async function removeStudent(sid) {
+    const cs = getClassSession();
+    if (!cs || cs.mode !== "staff") throw new Error("Not a teacher device");
+    await authedUid();
+    const classRef = db.collection("classes").doc(cs.cid);
+    const delAll = async (refs) => {
+      for (let i = 0; i < refs.length; i += 5) {
+        const b = db.batch();
+        refs.slice(i, i + 5).forEach((r) => b.delete(r));
+        await b.commit();
+      }
+    };
+    const cardRef = classRef.collection("cards").doc(sid);
+    const card = await cardRef.get();
+    const codeRefs = [];
+    if (card.exists) {
+      const c = card.data();
+      if (c.childHash) codeRefs.push(db.collection("studentCodes").doc(c.childHash));
+      if (c.parentHash) codeRefs.push(db.collection("studentCodes").doc(c.parentHash));
+    }
+    await delAll(codeRefs);
+    const stuRef = db.collection("students").doc(sid);
+    const profRef = classRef.collection("profiles").doc(sid);
+    const [devs, prog, act] = await Promise.all([
+      stuRef.collection("devices").get(),
+      profRef.collection("progress").get(),
+      profRef.collection("activity").get(),
+    ]);
+    await delAll(devs.docs.map((d) => d.ref));
+    await delAll(prog.docs.map((d) => d.ref));
+    await delAll(act.docs.map((d) => d.ref));
+    await profRef.delete();
+    if (card.exists) await cardRef.delete();
+    await stuRef.delete();
+    return { progress: prog.size, activity: act.size, devices: devs.size };
+  }
+
   async function listStudentDevices(sid) {
     const snap = await db.collection("students").doc(sid).collection("devices").get();
     return snap.docs.map((d) => Object.assign({ uid: d.id }, d.data()));
@@ -971,7 +1012,7 @@ const Sync = (function () {
   return {
     getIdToken,
     getClassSession, setClassSession, classMode, isConnected,
-    createClass, redeemKey, enrolStudent, replaceCard, redeemCard, rememberBoundStudent,
+    createClass, redeemKey, enrolStudent, replaceCard, removeStudent, redeemCard, rememberBoundStudent,
     listStudentDevices, listClassDevices, removeClassDevice, reportKioskActivity, fetchClassMeta, leaveClass, newKey, unbindStudent, checkSession,
     randomCode, sha256hex, normalizeSecret,
     getHouseholdCode,

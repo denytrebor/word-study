@@ -2105,6 +2105,7 @@
             <button class="btn btn-secondary" data-edit-save="${student.id}">Save</button>
             <button class="btn btn-ghost" data-edit-cancel="${student.id}">Cancel</button>
             <button class="btn btn-ghost card-replace-btn staff-only" data-card-replace="${student.id}">🪪 Issue a new card</button>
+            <button class="btn btn-ghost card-replace-btn staff-only" data-student-remove="${student.id}">🗑 Remove student</button>
           </div>
         </div>
 
@@ -6282,6 +6283,67 @@
       toast("Couldn't issue a new card — check your internet and try again.");
       b.disabled = false;
     }
+  });
+
+  // "Remove student": permanent. Two taps (arm, then confirm) because there are
+  // no backups; it deletes the card, devices and every stored record.
+  document.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-student-remove]");
+    if (!b) return;
+    const sid = b.getAttribute("data-student-remove");
+    const stu = getProfiles().find((p) => p.id === sid) || {};
+    if (b.dataset.armed !== "1") {
+      b.dataset.armed = "1";
+      b.textContent = `Tap again to PERMANENTLY delete ${stu.name || "this student"}`;
+      setTimeout(() => { b.dataset.armed = "0"; b.textContent = "🗑 Remove student"; }, 6000);
+      return;
+    }
+    b.disabled = true;
+    try {
+      await Sync.removeStudent(sid);
+      pruneLocalStudent(sid);
+      toast(`${stu.name || "Student"} was removed and their data deleted.`);
+      await loadParentDashboard();
+    } catch (err) {
+      toast("Couldn't finish removing — check your internet and tap again (it picks up where it stopped).");
+      b.disabled = false;
+    }
+  });
+
+  // Class-summary CSV: one row per student, from the dashboard data already
+  // loaded (no extra reads). Opens in Excel/Sheets.
+  function csvCell(v) {
+    let t = String(v == null ? "" : v);
+    if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; // spreadsheet formula injection
+    return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  }
+  function pruneLocalStudent(sid) {
+    saveProfiles(getProfiles().filter((p) => p.id !== sid));
+    save(PENDING_CARDS_KEY, getPendingCards().filter((c) => c.sid !== sid));
+    lastDashboardResults = lastDashboardResults.filter((r) => r.student.id !== sid);
+  }
+  function exportClassCsv() {
+    const rows = [["Student", "Grade", "Stars", "Lifetime stars", "Streak", "Best streak", "Last practiced",
+      "Answers this week", "Accuracy this week %", "Words shaky", "Recent test %"]];
+    lastDashboardResults.forEach(({ student, dates, activityByDate, progress }) => {
+      let ans = 0, ok = 0;
+      dates.forEach((d) => { const a = activityByDate[d]; if (a) { ans += a.answers || 0; ok += a.correct || 0; } });
+      const tests = (student.recentTests || []).slice(-3).map((t) => t.pct).join(" / ");
+      rows.push([student.name, student.grade || "", student.stars || 0, student.lifetimeStars || 0,
+        student.currentStreak || 0, student.bestStreak || 0, student.lastActiveDate || "",
+        ans, ans ? Math.round((ok / ans) * 100) : "", wordsNeedingWork(progress).length, tests]);
+    });
+    const csv = "\ufeff" + rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `class-summary-${todayLocalStr()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  document.getElementById("btn-class-export").addEventListener("click", () => {
+    if (!lastDashboardResults.length) { toast("Open the dashboard first so the class loads."); return; }
+    exportClassCsv();
   });
 
   /* ---- teacher dashboard: class tools ---- */

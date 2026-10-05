@@ -12,7 +12,8 @@ if (fs.existsSync(jreDir)) {
   if (d) javaBin = path.join(jreDir, d, "bin");
 }
 const env = Object.assign({}, process.env);
-if (javaBin) env.PATH = javaBin + path.delimiter + env.PATH;
+const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") || "PATH"; // Windows spells it "Path"
+if (javaBin) env[pathKey] = javaBin + path.delimiter + (env[pathKey] || "");
 
 const fb = path.join(__dirname, "node_modules", ".bin", process.platform === "win32" ? "firebase.cmd" : "firebase");
 const r = spawnSync(
