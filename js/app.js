@@ -2354,7 +2354,15 @@
       // Reconcile in case the catalog's word list changed since last practiced.
       const priorWords = Array.isArray(progress.words) ? progress.words : [];
       const existingById = new Map(priorWords.filter((w) => w && w.id).map((w) => [w.id, w]));
-      progress.words = catalogWords.map((w) => existingById.get(w.id) || Object.assign({ id: w.id, text: w.text, definition: w.definition || "" }, freshStat()));
+      // A matched word keeps its stats but takes the catalog's CURRENT text and
+      // definition — otherwise a teacher's typo fix would be saved to the
+      // catalog yet never reach a child who had already practised the word.
+      progress.words = catalogWords.map((w) => {
+        const prior = existingById.get(w.id);
+        return prior
+          ? Object.assign({}, prior, { text: w.text, definition: w.definition || "" })
+          : Object.assign({ id: w.id, text: w.text, definition: w.definition || "" }, freshStat());
+      });
       progress.label = week.label;
       progress.grade = week.grade;
     }
@@ -2505,12 +2513,19 @@
     // Set by a VERSE line and consumed by the next flushed week, so the
     // directive reads naturally above the words it belongs with.
     let pendingVerse = null;
+    // True from a `WEEK N` line until that week is flushed. While open, a
+    // SINGLE blank line (AI output and Google Docs love putting one between
+    // the spelling and vocabulary sections) does NOT split the week in two;
+    // two blank lines in a row still end it.
+    let weekOpen = false;
+    let blankRun = 0;
 
     function flushBlock() {
       if (block.length === 0) return;
       weekNum++;
       const useWeekNum = explicitWeekNum != null ? explicitWeekNum : weekNum;
       explicitWeekNum = null;
+      weekOpen = false;
       // Length caps are pure hardening, not a UX limit — no real spelling
       // word or definition comes close to 200 characters. Bounds how much a
       // single hostile line in a shared catalog paste can bloat the shared
@@ -2518,9 +2533,13 @@
       // paste degrades that one word instead of failing the whole save.
       const words = block
         .map((line) => {
-          const idx = line.indexOf(",");
+          // Word/definition separator: whichever comes first of a comma, a
+          // tab (spreadsheet/Docs table paste), a spaced dash, or ": ". Plain
+          // hyphens inside a word ("well-known") never match.
+          const m = line.match(/,|\t|\s[-–—]\s|:\s/);
+          const idx = m ? m.index : -1;
           const wtext = idx === -1 ? line : line.slice(0, idx);
-          const definition = idx === -1 ? "" : line.slice(idx + 1).trim();
+          const definition = idx === -1 ? "" : line.slice(idx + m[0].length).trim();
           return { id: uid(), text: wtext.trim().slice(0, 200), definition: definition.slice(0, 500) };
         })
         .filter((w) => w.text);
@@ -2536,7 +2555,8 @@
           label: `Grade ${currentGrade} · Week ${useWeekNum}`,
           words,
         };
-        if (pendingVerse && pendingVerse.ref) week.verse = pendingVerse;
+        if (pendingVerse && pendingVerse.none) week.noVerse = true; // "VERSE none": remove the verse on edit
+        else if (pendingVerse && pendingVerse.ref) week.verse = pendingVerse;
         weeks.push(week);
       }
       pendingVerse = null;
@@ -2544,7 +2564,14 @@
     }
 
     lines.forEach((raw) => {
-      const line = raw.trim();
+      let line = raw.trim();
+      // Tolerate what pasting from a chat assistant, a document or a web page
+      // adds around the content: code fences, markdown emphasis, list
+      // bullets and numbering, and section headings that aren't words.
+      if (/^```/.test(line)) return;
+      line = line.replace(/\*\*|__|`/g, "").trim();
+      line = line.replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, "").trim();
+      if (/^(?:spelling|vocab(?:ulary)?)(?:\s+words?)?\s*:?$/i.test(line)) return;
       const gradeMatch = line.match(/^grade\s+(\S+)\s*(?:\(starts\s+(\d{4}-\d{2}-\d{2})\))?/i);
       if (gradeMatch) {
         flushBlock();
@@ -2558,6 +2585,8 @@
       if (weekMatch) {
         flushBlock(); // in case words were already piling up with no blank line before this marker
         explicitWeekNum = parseInt(weekMatch[1], 10);
+        weekOpen = true;
+        blankRun = 0;
         return;
       }
       // VERSE John 3:16                  — reference only, text filled in from
@@ -2567,14 +2596,89 @@
       const verseMatch = line.match(/^verse\s+(.+)$/i);
       if (verseMatch) {
         const [ref, ...rest] = verseMatch[1].split("|");
-        pendingVerse = { ref: ref.trim().slice(0, 120), text: rest.join("|").trim().slice(0, 4000) };
+        pendingVerse = /^none$/i.test(ref.trim())
+          ? { none: true }
+          : { ref: ref.trim().slice(0, 120), text: rest.join("|").trim().slice(0, 4000) };
         return;
       }
-      if (!line) { flushBlock(); return; }
+      if (!line) {
+        blankRun++;
+        if (weekOpen && blankRun < 2) return; // one blank inside an explicit WEEK block is not a week break
+        flushBlock();
+        return;
+      }
+      blankRun = 0;
       block.push(line);
     });
     flushBlock();
     return weeks;
+  }
+
+  // Safe week editing. Re-parsing a paste mints brand-new word ids, and
+  // progress is keyed by word id, so saving even a one-letter fix used to reset
+  // every child's stats for the whole week and drop its verse. This pass, run
+  // on the parsed weeks BEFORE preview/save, gives each word whose text still
+  // matches (case/spacing-insensitive) the id it already had, carries the
+  // stored verse over, and returns a per-week summary for the preview.
+  function reconcileIncomingWeeks(incoming, existing) {
+    const byId = new Map((existing || []).map((w) => [w.id, w]));
+    return incoming.map((week) => {
+      const old = byId.get(week.id);
+      const info = { week, isNew: !old, kept: 0, added: 0, removed: [], defChanged: 0, verse: "" };
+      if (!old) {
+        if (week.noVerse) delete week.noVerse;
+        return info;
+      }
+      const oldByText = new Map();
+      (old.words || []).forEach((w) => {
+        const k = normalizeSpelling(w.text);
+        if (!oldByText.has(k)) oldByText.set(k, []);
+        oldByText.get(k).push(w);
+      });
+      const used = new Set();
+      week.words.forEach((w) => {
+        const list = oldByText.get(normalizeSpelling(w.text));
+        const match = list && list.shift();
+        if (match) {
+          w.id = match.id;
+          used.add(match.id);
+          info.kept++;
+          if ((match.definition || "") !== (w.definition || "")) info.defChanged++;
+        } else {
+          info.added++;
+        }
+      });
+      info.removed = (old.words || []).filter((w) => !used.has(w.id)).map((w) => w.text);
+      const sameRef = (a, b) => String(a || "").replace(/\s+/g, "").toLowerCase() === String(b || "").replace(/\s+/g, "").toLowerCase();
+      if (week.noVerse) {
+        delete week.noVerse;
+        delete week.verse;
+        info.verse = old.verse ? "Verse removed" : "";
+      } else if (!week.verse && old.verse) {
+        week.verse = old.verse;
+        info.verse = "Verse kept: " + old.verse.ref;
+      } else if (week.verse && old.verse && sameRef(week.verse.ref, old.verse.ref) && !week.verse.text) {
+        week.verse = old.verse;
+        info.verse = "Verse kept: " + old.verse.ref;
+      } else if (week.verse) {
+        info.verse = "Verse: " + week.verse.ref;
+      }
+      return info;
+    });
+  }
+
+  // Local safety net for catalog edits: the version of every existing week
+  // that a save is about to overwrite is stashed (last 5 saves), so a bad
+  // paste can be rolled back from the editor without the owner's own copy.
+  function undoKey(code) { return `ws_catalog_undo_${code}`; }
+  function stashCatalogBeforeSave(code, incoming) {
+    const existing = load(catalogWeeksKey(code), []);
+    const ids = new Set(incoming.map((w) => w.id));
+    const touched = existing.filter((w) => ids.has(w.id));
+    if (!touched.length) return;
+    const stack = load(undoKey(code), []);
+    stack.push({ at: new Date().toISOString(), weeks: touched });
+    save(undoKey(code), stack.slice(-5));
   }
 
   function mergeWeeks(existing, incoming) {
@@ -2606,6 +2710,10 @@
 
   function weekToPasteText(week) {
     const lines = [`GRADE ${week.grade} (starts ${impliedSeriesStart(week)})`, "", `WEEK ${week.weekNumber || 1}`, ""];
+    // Without this line an edit silently dropped the week's Bible verse. Only
+    // the reference is written; reconcileIncomingWeeks() reattaches the stored
+    // text (and any per-verse split) when the reference is unchanged.
+    if (week.verse && week.verse.ref) lines.push(`VERSE ${week.verse.ref}`);
     (week.words || []).forEach((w) => lines.push(w.definition ? `${w.text}, ${w.definition}` : w.text));
     return lines.join("\n");
   }
@@ -2797,6 +2905,7 @@
     document.getElementById("btn-copy-catalog-link").classList.toggle("hidden", code === LOCAL_CATALOG);
     showScreen("catalog-editor");
     renderCatalogWeeksManager();
+    refreshCatalogUndoButton();
 
     // Ownership is a soft guardrail (same posture as household/catalog
     // codes themselves), not a hard permission — it just keeps someone from
@@ -3203,6 +3312,7 @@
   document.getElementById("btn-preview-catalog").addEventListener("click", () => {
     const text = document.getElementById("catalog-paste-input").value;
     catalogParsePreview = parseCatalogText(text);
+    const previewInfo = reconcileIncomingWeeks(catalogParsePreview, load(catalogWeeksKey(getCatalogCode()), state.catalogWeeks || []));
     const box = document.getElementById("catalog-preview");
     if (!catalogParsePreview.length) {
       box.innerHTML = '<p class="hint">Nothing parsed yet — check the format (each grade needs a "GRADE ..." line).</p>';
@@ -3211,10 +3321,24 @@
       return;
     }
     box.innerHTML = "";
-    catalogParsePreview.forEach((w) => {
+    previewInfo.forEach((info) => {
+      const w = info.week;
       const row = document.createElement("div");
       row.className = "result-row";
-      row.innerHTML = `<span>${escapeAttr(w.label)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${w.words.length} words · starts ${w.weekStartDate}</span>`;
+      row.style.flexWrap = "wrap";
+      let status;
+      if (info.isNew) status = "New week";
+      else {
+        const bits = [`updates an existing week — progress kept for ${info.kept} word${info.kept === 1 ? "" : "s"}`];
+        if (info.added) bits.push(`${info.added} new`);
+        if (info.defChanged) bits.push(`${info.defChanged} definition${info.defChanged === 1 ? "" : "s"} changed`);
+        if (info.removed.length) bits.push(`removed (progress on these is dropped): ${info.removed.join(", ")}`);
+        status = bits.join(" · ");
+      }
+      const wordLines = w.words.map((x) => `<div style="font-weight:400;font-size:.85rem"><strong>${escapeAttr(x.text)}</strong>${x.definition ? " — " + escapeAttr(x.definition) : ""}</div>`).join("");
+      row.innerHTML = `<span>${escapeAttr(w.label)}</span><span style="font-weight:400;color:var(--muted);font-size:.85rem">${w.words.length} words · starts ${w.weekStartDate}</span>` +
+        `<div style="flex-basis:100%;font-weight:400;font-size:.85rem;color:var(--muted);margin-top:4px">${escapeAttr(status)}${info.verse ? " · " + escapeAttr(info.verse) : ""}</div>` +
+        `<details style="flex-basis:100%;margin-top:4px"><summary style="font-weight:600;font-size:.85rem;cursor:pointer">Check the words</summary>${wordLines}</details>`;
       box.appendChild(row);
     });
     box.classList.remove("hidden");
@@ -3251,6 +3375,7 @@
     btn.disabled = true;
     try {
       await fillVerseTextFromKJV(catalogParsePreview);
+      stashCatalogBeforeSave(code, catalogParsePreview);
       if (firestoreReady()) await Sync.saveCatalogWeeks(code, catalogParsePreview);
       const key = catalogWeeksKey(code);
       // sanitizeWeeks() here is belt-and-suspenders, not a fix for a known
@@ -3269,9 +3394,50 @@
       document.getElementById("catalog-preview").classList.add("hidden");
       btn.classList.add("hidden");
       renderCatalogWeeksManager();
+      refreshCatalogUndoButton();
       if (state.profile) await loadCatalogAndWeek();
     } catch (e) {
       toast("Couldn't save — check your internet and try again.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // A preview describes the text that was in the box when Preview was tapped.
+  // Editing the box afterwards must not leave a Save button that would save
+  // the OLD parse.
+  document.getElementById("catalog-paste-input").addEventListener("input", () => {
+    catalogParsePreview = [];
+    document.getElementById("catalog-preview").classList.add("hidden");
+    document.getElementById("btn-save-catalog").classList.add("hidden");
+  });
+
+  function refreshCatalogUndoButton() {
+    const btn = document.getElementById("btn-catalog-undo");
+    if (!btn) return;
+    const stack = load(undoKey(getCatalogCode()), []);
+    btn.classList.toggle("hidden", !stack.length);
+  }
+
+  document.getElementById("btn-catalog-undo").addEventListener("click", async () => {
+    const code = getCatalogCode();
+    const stack = load(undoKey(code), []);
+    const last = stack.pop();
+    if (!last) return;
+    const btn = document.getElementById("btn-catalog-undo");
+    btn.disabled = true;
+    try {
+      if (firestoreReady()) await Sync.saveCatalogWeeks(code, last.weeks);
+      const merged = sanitizeWeeks(mergeWeeks(load(catalogWeeksKey(code), []), last.weeks));
+      save(catalogWeeksKey(code), merged);
+      save(undoKey(code), stack);
+      state.catalogWeeks = merged;
+      renderCatalogWeeksManager();
+      refreshCatalogUndoButton();
+      toast(`Restored the previous version of ${last.weeks.length} week${last.weeks.length === 1 ? "" : "s"}.`);
+      if (state.profile) await loadCatalogAndWeek();
+    } catch (e) {
+      toast("Couldn't restore — check your internet and try again.");
     } finally {
       btn.disabled = false;
     }
