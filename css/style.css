@@ -737,6 +737,7 @@ input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:foc
 }
 .scramble-tile {
   width: 52px;
+  flex-shrink: 0;
   height: 52px;
   display: flex;
   align-items: center;
@@ -751,7 +752,7 @@ input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:foc
 .scramble-bank-row .bank-tile {
   background: var(--primary);
   color: white;
-  cursor: grab;
+  cursor: pointer;
   border: none;
   box-shadow: var(--shadow);
   position: relative;

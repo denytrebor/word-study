@@ -445,11 +445,11 @@
   // `stars` is the spendable balance (shop purchases decrement it);
   // `lifetimeStars` is monotonically increasing, so future levels/badges
   // never conflict with what's been spent.
-  function addStars(n) {
+  function addStars(n, quiet = false) {
     state.profile.stars = (state.profile.stars || 0) + n;
     state.profile.lifetimeStars = (state.profile.lifetimeStars || 0) + n;
     persistProfile();
-    animateStarGain(n);
+    if (!quiet) animateStarGain(n);
   }
 
   // Mechanic 2 ("star fly-in + count-up"): every award used to just snap the
@@ -1009,7 +1009,7 @@
   // missed day so the streak continues as if uninterrupted. Only ever
   // surfaces at the moment it SAVES something; never a warning about
   // running low, never a countdown toward losing the streak.
-  function ensureStreakForToday() {
+  function ensureStreakForToday(silent = false, quietRewards = false) {
     const p = state.profile;
     const today = todayLocalStr();
     if (p.lastActiveDate === today) return;
@@ -1021,7 +1021,7 @@
     } else if (p.lastActiveDate === twoDaysAgo && (p.streakShields || 0) > 0) {
       p.streakShields--;
       newStreak = (p.currentStreak || 0) + 1;
-      toast("🛡️ Your shield kept your streak going!");
+      if (!silent) toast("🛡️ Your shield kept your streak going!");
     } else {
       newStreak = 1;
     }
@@ -1035,11 +1035,13 @@
     if (newStreak % 7 === 0 && (p.streakShields || 0) < 1) p.streakShields = (p.streakShields || 0) + 1;
     const bonus = STREAK_MILESTONES[newStreak];
     if (bonus) {
-      addStars(bonus);
-      toast(`🔥 ${newStreak}-day streak! +${bonus} ⭐`);
-      celebrate("big");
-      playSound("streak");
-      reactBuddy("cheer");
+      addStars(bonus, quietRewards);
+      if (!silent) {
+        toast(`🔥 ${newStreak}-day streak! +${bonus} ⭐`);
+        celebrate("big");
+        playSound("streak");
+        reactBuddy("cheer");
+      }
     }
   }
 
@@ -1055,9 +1057,8 @@
   // The single place every study mode reports an answer through — updates
   // per-word stats, activity counters, the star economy, and medal-up
   // detection all together so no call site can drift out of sync with another.
-  // opts.silent suppresses the medal-up toast/celebration for this call only
-  // (Test Mode's whole design is "no feedback until the final score screen" —
-  // a mid-test medal-up toast would leak whether that answer was correct).
+  // opts.silent suppresses answer/medal/streak/goal/first-practice feedback.
+  // opts.quietRewards also defers the star UI to one combined results payout.
   // Stats, stars, activity, and streak bookkeeping still happen either way.
   // opts.noStars: self-graded modes (Flip & Rate's "I Knew It", Speed Quiz's
   // "Got It", Vocab Test's "I Knew It") and off-grade weeks (see offGradeWeek
@@ -1074,6 +1075,7 @@
   // become (session.streak + 1). Omit it and the tone plays flat, as before.
   function recordAnswer(w, correct, statKind, opts) {
     const silent = !!(opts && opts.silent);
+    const quietRewards = !!(opts && opts.quietRewards);
     const noStars = !!(opts && opts.noStars);
     const streakStep = opts && opts.streakStep;
     const beforeMedal = wordMedal(w);
@@ -1112,7 +1114,7 @@
       if (correct) {
         starsAwarded = starsForCorrectAnswer(w, wasGoldBefore, activity);
         if (starsAwarded > 0) {
-          addStars(starsAwarded);
+          addStars(starsAwarded, quietRewards);
           activity.starsEarned += starsAwarded;
           activity.starEarns[w.id] = (activity.starEarns[w.id] || 0) + starsAwarded;
         }
@@ -1133,11 +1135,11 @@
 
     if (!noStars) {
       if (isFirstAnswerToday) {
-        ensureStreakForToday();
-        addStars(3);
-        toast("🌞 First practice today! +3 ⭐");
+        ensureStreakForToday(silent, quietRewards);
+        addStars(3, quietRewards);
+        if (!silent) toast("🌞 First practice today! +3 ⭐");
       }
-      checkDailyGoal(activity);
+      checkDailyGoal(activity, silent, quietRewards);
       if (activity.answers % 10 === 0) flushActivity();
     }
 
@@ -1165,10 +1167,10 @@
   // reaching the cap reads as "no more stars today," not as a broken feature.
   const MAX_BONUS_ROUNDS_PER_DAY = 8;
 
-  function awardCappedBonus(amount, activity) {
+  function awardCappedBonus(amount, activity, quietRewards = false) {
     if ((activity.bonusRoundsToday || 0) >= MAX_BONUS_ROUNDS_PER_DAY) return false;
     activity.bonusRoundsToday = (activity.bonusRoundsToday || 0) + 1;
-    addStars(amount);
+    addStars(amount, quietRewards);
     activity.starsEarned = (activity.starsEarned || 0) + amount;
     return true;
   }
@@ -3495,16 +3497,18 @@
   // mid-session rather than only when the kid returns to Home. `goalAwarded`
   // is persisted on the activity doc (not just held in memory) so reloading
   // the page or practicing on a second device can't re-award the bonus.
-  function checkDailyGoal(activity) {
+  function checkDailyGoal(activity, silent = false, quietRewards = false) {
     if (!activity || activity.goalAwarded) return;
     if ((activity.answers || 0) < DAILY_GOAL_ANSWERS) return;
     activity.goalAwarded = true;
-    addStars(DAILY_GOAL_BONUS);
+    addStars(DAILY_GOAL_BONUS, quietRewards);
     activity.starsEarned = (activity.starsEarned || 0) + DAILY_GOAL_BONUS;
-    toast(`🎯 Daily goal reached! +${DAILY_GOAL_BONUS} ⭐`);
-    celebrate("big");
-    playSound("medal");
-    reactBuddy("cheer");
+    if (!silent) {
+      toast(`🎯 Daily goal reached! +${DAILY_GOAL_BONUS} ⭐`);
+      celebrate("big");
+      playSound("medal");
+      reactBuddy("cheer");
+    }
     flushActivity();
   }
 
@@ -4697,6 +4701,8 @@
       test.queue = shuffle(state.progress.words);
       test.index = 0;
       test.results = [];
+      test.revealed = false;
+      test.bestPrior = null;
       recordModeStart("test");
       renderTest();
       showScreen("test");
@@ -4739,13 +4745,10 @@
   });
 
   function nextTestWord(record) {
-    const w = test.queue[test.index];
-    // Vocab Test is self-graded (an honest self-rating, never checked) —
-    // Spelling Test is a real typed answer. Same off-grade gate as every
-    // other mode either way.
-    recordAnswer(w, record.correct, record.kind, { silent: true, noStars: record.kind === "vocab" || offGradeWeek() });
+    if (test.revealed || test.index >= test.queue.length) return;
+    // Keep answers in memory until results: exiting, switching profiles, or
+    // reloading an unfinished test discards its stats and rewards, with no payout.
     test.results.push(record);
-    saveProgress(state.profile.id, state.progress.weekId, state.progress);
 
     test.index++;
     if (test.index >= test.queue.length) {
@@ -4805,12 +4808,21 @@
   }
 
   function showTestResults() {
-    let bestPrior = null;
-    if (state.profile && state.progress) {
+    const firstReveal = !test.revealed;
+    const starsBefore = firstReveal ? (state.profile.stars || 0) : null;
+    test.revealed = true;
+    if (firstReveal && state.profile && state.progress) {
+      test.results.forEach((record, i) => {
+        recordAnswer(test.queue[i], record.correct, record.kind, {
+          silent: true, quietRewards: true,
+          noStars: record.kind === "vocab" || offGradeWeek(),
+        });
+      });
+      saveProgress(state.profile.id, state.progress.weekId, state.progress);
       const total = test.results.length;
       const right = test.results.filter((r) => r.correct).length;
       const pct = total ? Math.round((right / total) * 100) : 0;
-      bestPrior = bestPriorScore(state.progress.weekId, test.kind, "test");
+      test.bestPrior = bestPriorScore(state.progress.weekId, test.kind, "test");
       recordTestResult(test.kind, "test", pct);
     }
     renderResultsScreen({
@@ -4818,7 +4830,9 @@
       kindLabel: (test.kind === "spelling" ? "Spelling" : "Vocab") + " Test",
       results: test.results,
       allowBonus: test.kind === "spelling" && !offGradeWeek(),
-      bestPrior,
+      bestPrior: test.bestPrior,
+      firstReveal,
+      starsBefore,
     });
   }
 
@@ -4828,7 +4842,7 @@
   // repeatedly, not a verified perfect score. See recordAnswer's noStars.
   let resultsMissedPractice = { words: [], isVocab: false };
 
-  function renderResultsScreen({ title, kindLabel, results, allowBonus, bestPrior }) {
+  function renderResultsScreen({ title, kindLabel, results, allowBonus, bestPrior, firstReveal = true, starsBefore = null }) {
     const total = results.length;
     const right = results.filter((r) => r.correct).length;
     const pct = total ? Math.round((right / total) * 100) : 0;
@@ -4879,21 +4893,23 @@
     resultsMissedPractice = { words: missedWords, isVocab: isVocabResults };
     missedBtn.classList.toggle("hidden", missedWords.length === 0);
 
-    const perfectRoundBonus = allowBonus && total >= 4 && right === total;
-    if (perfectRoundBonus) {
-      const paid = awardCappedBonus(5, getOrInitActivity());
-      toast(paid ? "🌟 Perfect round! +5 ⭐" : "🌟 Perfect round!");
-    } else if (pct === 100) toast("Perfect score! Amazing! 🌟");
-    else if (pct >= 80) toast("Great job! Almost ready! ⭐");
-    else toast("Good practice — a few more rounds will help.");
-
-    if (pct >= 90) { celebrate("big"); playSound("perfect"); }
-
-    flushActivity();
     showScreen("test-results");
-    // Must run after showScreen(), not next to the celebrate() above: showScreen()
-    // calls clearBuddy(), so a class added before it would be wiped immediately.
-    if (pct >= 90) reactBuddy("cheer");
+    if (firstReveal) {
+      const perfectRoundBonus = allowBonus && total >= 4 && right === total;
+      if (perfectRoundBonus) {
+        const paid = awardCappedBonus(5, getOrInitActivity(), starsBefore !== null);
+        toast(paid ? "🌟 Perfect round! +5 ⭐" : "🌟 Perfect round!");
+      } else if (pct === 100) toast("Perfect score! Amazing! 🌟");
+      else if (pct >= 80) toast("Great job! Almost ready! ⭐");
+      else toast("Good practice — a few more rounds will help.");
+
+      if (starsBefore !== null) {
+        const gained = (state.profile.stars || 0) - starsBefore;
+        if (gained > 0) animateStarGain(gained);
+      }
+      if (pct >= 90) { celebrate("big"); playSound("perfect"); reactBuddy("cheer"); }
+      flushActivity();
+    }
   }
   document.getElementById("test-results-done").addEventListener("click", () => { renderHome(); showScreen("home"); });
   document.getElementById("test-results-practice-missed").addEventListener("click", () => {
@@ -5103,8 +5119,8 @@
         slot = document.createElement("button");
         slot.type = "button";
         slot.className = "scramble-tile filled";
-        slot.textContent = tile.char.toUpperCase();
-        slot.setAttribute("aria-label", "Remove letter " + tile.char.toUpperCase());
+        slot.textContent = tile.char;
+        slot.setAttribute("aria-label", "Remove letter " + tile.char);
         slot.addEventListener("click", () => removeFromAnswer(i));
       } else {
         slot = document.createElement("div");
@@ -5116,15 +5132,16 @@
     scramble.bank.forEach((tile) => {
       if (scramble.answer.includes(tile.id)) return;
       const el = document.createElement("button");
+      el.type = "button";
       el.className = "scramble-tile bank-tile";
-      el.textContent = tile.char.toUpperCase();
+      el.textContent = tile.char;
       attachTileDrag(el, tile.id);
       bankRow.appendChild(el);
     });
   }
 
   function placeInAnswer(tileId) {
-    if (scramble.locked) return;
+    if (scramble.locked || scramble.answer.includes(tileId)) return;
     const idx = scramble.answer.indexOf(null);
     if (idx === -1) return;
     scramble.answer[idx] = tileId;
@@ -5147,34 +5164,51 @@
     document.getElementById("scramble-submit").classList.toggle("hidden", !canSubmit);
   }
 
-  // A tap and a drag both end in the same place: release the tile and it
-  // drops into the next empty answer slot. The visual drag exists purely
-  // for the tactile "move the letter with your finger" feel — there's no
-  // pixel-precise drop-zone check, which keeps it forgiving for small
-  // fingers and imprecise drops.
+  // Native clicks cover taps, Enter/Space, and assistive technology. Drags
+  // place only in the answer row; suppress their follow-up click so a tile
+  // is never placed twice (or placed after a cancelled/outside drop).
   function attachTileDrag(el, tileId) {
-    let dragging = false, startX = 0, startY = 0, pointerId = null;
+    let dragging = false, moved = false, suppressClick = false, startX = 0, startY = 0, pointerId = null;
+    el.addEventListener("click", (e) => {
+      if (suppressClick && e.detail !== 0) return;
+      suppressClick = false;
+      placeInAnswer(tileId);
+    });
     el.addEventListener("pointerdown", (e) => {
+      if (scramble.locked || dragging || !e.isPrimary || e.button !== 0) return;
       dragging = true;
+      moved = false;
+      suppressClick = false;
       startX = e.clientX;
       startY = e.clientY;
       pointerId = e.pointerId;
       el.setPointerCapture(pointerId);
-      el.classList.add("dragging");
     });
     el.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
+      if (!dragging || e.pointerId !== pointerId) return;
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
+      if (Math.hypot(dx, dy) > 6) moved = true;
+      if (!moved) return;
+      el.classList.add("dragging");
       el.style.transform = `translate(${dx}px, ${dy}px)`;
     });
-    function endDrag() {
-      if (!dragging) return;
+    function endDrag(e) {
+      if (!dragging || e.pointerId !== pointerId) return;
       dragging = false;
-      placeInAnswer(tileId);
+      suppressClick = moved || e.type !== "pointerup";
+      el.classList.remove("dragging");
+      el.style.transform = "";
+      if (el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId);
+      if (e.type !== "pointerup" || !moved) return;
+      const bounds = document.getElementById("scramble-answer-row").getBoundingClientRect();
+      if (e.clientX >= bounds.left && e.clientX <= bounds.right && e.clientY >= bounds.top && e.clientY <= bounds.bottom) {
+        placeInAnswer(tileId);
+      }
     }
     el.addEventListener("pointerup", endDrag);
     el.addEventListener("pointercancel", endDrag);
+    el.addEventListener("lostpointercapture", endDrag);
   }
 
   function checkScrambleAnswer() {
