@@ -2967,6 +2967,7 @@
       const week = state.catalogWeeks.find((w) => w.id === editBtn.getAttribute("data-week-edit"));
       if (!week) return;
       document.getElementById("catalog-paste-input").value = weekToPasteText(week);
+      document.getElementById("catalog-paste-input").dispatchEvent(new Event("input"));
       document.getElementById("catalog-paste-input").scrollIntoView({ behavior: "smooth", block: "center" });
       toast("Loaded below — edit the words, then Preview and Save to update just this week.");
       return;
@@ -3190,6 +3191,19 @@
   }
 
   function extractionToPaste(result, grade, fallbackWeek) {
+    // Anything the reader returns is data, never an import directive: a word that
+    // starts like "WEEK 9", "GRADE 3" or "VERSE x" would redirect the parser, and
+    // a comma/dash/colon inside a spelling word would split it into word + definition.
+    const safeWord = (t) => String(t).replace(/[,:\t]| [-\u2013\u2014] /g, " ").replace(/\s+/g, " ").trim()
+      .replace(/^(week|grade|verse|spelling|vocab(?:ulary)?)\b/i, "\u200b$1");
+    const safeDef = (t) => String(t).replace(/\t/g, " ").replace(/\s+/g, " ").trim();
+    result = {
+      weeks: result.weeks.map((w) => ({
+        week: w.week, verse: w.verse,
+        spelling: w.spelling.map(safeWord).filter(Boolean),
+        vocabulary: w.vocabulary.map((v) => ({ word: safeWord(v.word), definition: safeDef(v.definition) })).filter((v) => v.word),
+      })),
+    };
     const weeks = result.weeks.filter((w) => w.spelling.length || w.vocabulary.length);
     const out = [];
     const nums = weeks.map((w, i) => w.week || (weeks.length === 1 ? fallbackWeek : fallbackWeek + i));
@@ -3219,9 +3233,11 @@
       const token = await Sync.getIdToken();
       const resp = await fetch(WORKER_ORIGIN + "/api/extract-words", {
         method: "POST",
+        signal: AbortSignal.timeout(90000),
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
         body: JSON.stringify({ images: qaPhotos.map((p) => p.dataUrl), text }),
       });
+      if (resp.status === 413) { status.textContent = "Those photos are too large together — add fewer photos at a time."; return; }
       if (resp.status === 429) { status.textContent = "That's a lot of scans in a short time — wait a few minutes, or paste the words by hand."; return; }
       if (!resp.ok) throw new Error("http " + resp.status);
       const result = await resp.json();
@@ -3233,9 +3249,11 @@
       const box = document.getElementById("catalog-paste-input");
       const previous = box.value;
       box.value = built.text;
+      box.dispatchEvent(new Event("input")); // invalidates any earlier Preview
       box.scrollIntoView({ behavior: "smooth", block: "center" });
       const counts = built.weeks.map((w, i) => `Week ${built.nums[i]}: ${w.spelling.length} spelling + ${w.vocabulary.length} vocabulary`).join("; ");
       let msg = `Read it. ${counts}. Compare with the page (tap a photo to enlarge), fix anything wrong in the box, then Preview and Save.`;
+      if (result.truncated) msg += " WARNING: the page had more words than could be read at once — some are missing; add the rest by hand or scan the rest separately.";
       if (result.engine === "workers-ai") msg += " (Basic reader in use — check every word carefully.)";
       status.textContent = msg + " ";
       if (result.unsure && result.unsure.length) {
@@ -3249,7 +3267,7 @@
         undo.type = "button";
         undo.className = "link-btn";
         undo.textContent = "Undo (put the old text back)";
-        undo.addEventListener("click", () => { box.value = previous; status.textContent = "Put the previous text back."; });
+        undo.addEventListener("click", () => { box.value = previous; box.dispatchEvent(new Event("input")); status.textContent = "Put the previous text back."; });
         status.appendChild(undo);
       }
     } catch (err) {

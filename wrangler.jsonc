@@ -21,6 +21,8 @@
     "run_worker_first": ["/api/*"]
   },
   "ai": { "binding": "AI" },
+  // Durable daily usage caps for /api/extract-words (per device and global).
+  "kv_namespaces": [{ "binding": "LIMITS", "id": "843deb0f22b048b19b592651f878d1cc" }],
   // Creates the DNS record for the hostname as part of the deploy.
   "routes": [{ "pattern": "wordstudy.trebor.me", "custom_domain": true }],
   // Serve ONLY on the custom domain (same reasoning as family-organizer).
