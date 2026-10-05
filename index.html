@@ -121,6 +121,7 @@
         <h4>School classes</h4>
         <p>A school class works differently from a family household, on purpose. The teacher creates the class and enrolls students; each child gets a personal <strong>card</strong> (a QR code with a short code) and each family a separate read-only <strong>parent code</strong>. Whoever holds a child's card can open that child's practice — so cards should be kept private, and a teacher can replace a lost one, which immediately stops the old card and every device that used it. A parent code can only <em>view</em> that one child's progress. A teacher device can see the whole class's progress and word list. Shared classroom devices are set up with a separate key; they can read the class word list but are not tied to any child and do not show other students. Children cannot see other children's practice from their own device. The class stores a student's first name or nickname, grade, avatar, star and streak totals, per-word practice results (including up to three recent misspellings per word) and test percentages, with Google Firebase (region: US multi-region). Cards and keys are stored only as one-way hashes, so they cannot be read back from the database. The service operator can also see the stored data. There are no scheduled backups, so deleted data cannot be recovered. A teacher can remove a student's access; to have a student's stored records deleted, contact the address below.</p>
         <h4>Deleting your data</h4>
+        <p><strong>Reading a word list from a photo or pasted text (teachers/parents only).</strong> When an adult uses "Add a week's words" in the word-list editor, the photo or pasted text (a spelling list — not any student's data) is sent over an encrypted connection to this app's own server (a Cloudflare Worker), which passes it to Anthropic's Claude service to read the words and sends the words back. The photo is not saved by Word Study; Anthropic handles API inputs under its own commercial terms and does not train on them by default. Please do not photograph anything other than the word list, and keep children's faces and names out of the picture.</p>
         <p>Clearing your browser's site data for this app removes everything stored locally on that device. If a household code was ever created or joined, or a school class was used, a copy also lives in Firebase; there is currently no self-service "delete my data" button in the app itself, so reach out using the contact info below to request that a household's or a student's stored data be deleted.</p>
         <h4>Being honest about the security model</h4>
         <p>Family households have no username-and-password accounts: access is by a shared household code. That's a deliberate tradeoff to keep the app simple for a family to use, not an oversight — it means anyone who has your household's code has full access to what's stored under it, the same as anyone holding a spare house key, so don't share it outside your family. School classes use personal cards and per-device access instead (see above), but there are still no passwords: anyone who holds a child's card, a teacher key or a class-device key can use it until it is replaced.</p>
@@ -311,28 +312,24 @@
       <button id="btn-starter-lists-from-catalog" class="btn btn-secondary">⚡ Or load a ready-made starter list</button>
       <p class="hint catalog-readonly-note hidden" id="catalog-readonly-note"></p>
       <div id="catalog-editor-form">
-        <!-- No `capture` attribute: that forces straight-to-camera on iOS with
-             no way to pick an existing photo. OCR runs entirely client-side
-             regardless of source, so a gallery photo is exactly as private as
-             a fresh one — omitting `capture` just lets the browser show its
-             normal Camera-or-Photo-Library picker instead. -->
-        <input type="file" id="catalog-scan-input" accept="image/*" class="hidden">
-        <button id="btn-catalog-scan" type="button" class="btn btn-ghost">📷 Scan a Photo</button>
-        <!-- Only shown when the box already has text. Scanning used to always
-             append, which made a retry after a bad scan look like it had
-             failed again: the old garbage was still sitting on top of the new
-             text. Asking is one tap, and it keeps the genuine multi-page
-             workflow (scan page 1, scan page 2) working. -->
-        <div id="catalog-scan-merge-confirm" class="parent-pin-entry shop-buy-confirm hidden">
-          <p class="hint">There's already text in the box below. Add the scan to the end of it, or start fresh?</p>
-          <div class="parent-pin-actions">
-            <button id="btn-catalog-scan-append" type="button" class="btn btn-secondary">Add to it</button>
-            <button id="btn-catalog-scan-replace" type="button" class="btn btn-secondary">Replace it</button>
-            <button id="btn-catalog-scan-cancel" type="button" class="btn btn-ghost">Cancel</button>
+        <!-- Quick add: photo(s) or pasted text -> the words below, ready to check.
+             No `capture` attribute: that forces straight-to-camera on iOS with no
+             way to pick an existing photo or PDF screenshot. -->
+        <div id="quick-add-panel" class="parent-pin-entry" style="display:block;">
+          <p class="shop-section-title" style="margin-top:0;">✨ Add a week's words</p>
+          <p class="hint">Take a photo of the word list (or pick photos, or paste the words from an email or document). The app reads it, then <strong>you check it against the page</strong> before saving.</p>
+          <div class="new-profile-form">
+            <input type="text" id="qa-grade" aria-label="Grade" placeholder="Grade (e.g. 3)" spellcheck="false" autocomplete="off" inputmode="text">
+            <input type="number" id="qa-week" aria-label="Week number" placeholder="Week #" min="1" max="60" inputmode="numeric">
           </div>
+          <input type="file" id="catalog-scan-input" accept="image/*" multiple class="hidden">
+          <button id="btn-catalog-scan" type="button" class="btn btn-secondary">📷 Add a photo of the list</button>
+          <div id="qa-photos" class="qa-photos"></div>
+          <textarea id="qa-text" rows="3" placeholder="…or paste the words here, in any format" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
+          <button id="btn-qa-read" type="button" class="btn btn-primary">✨ Read it</button>
+          <p class="hint" id="catalog-scan-status" aria-live="polite"></p>
         </div>
-        <p class="hint" id="catalog-scan-status"></p>
-        <p class="hint">Scans a photo of a word list and fills the box below with what it reads — sideways and upside-down photos are turned the right way up automatically. Check it over before saving: OCR isn't perfect, and a bad scan can be edited by hand just like a paste. Best results come from a straight-on, flat shot of the page — a curled or angled page reads poorly no matter which way up it is.</p>
+        <p class="hint">Advanced: the box below is the raw text that gets saved. Everything above fills it in; you can also type or paste straight into it. Start each grade with a <code>GRADE</code> line and each week with a <code>WEEK</code> line.</p>
         <textarea id="catalog-paste-input" rows="10" placeholder="GRADE 3 (starts 2026-09-01)&#10;&#10;friend&#10;habit, something you do often&#10;&#10;GRADE 5 (starts 2026-09-08)&#10;&#10;necessary, absolutely required&#10;calendar&#10;brilliant, very bright or intelligent&#10;&#10;GRADE 7 (starts 2026-09-01)&#10;&#10;dilemma, a difficult choice&#10;achieve, to succeed at" spellcheck="false" autocomplete="off" autocorrect="off"></textarea>
         <button id="btn-preview-catalog" class="btn btn-secondary">Preview</button>
         <div id="catalog-preview" class="results-list hidden"></div>
@@ -868,7 +865,6 @@
 <script src="js/starter-lists.js"></script>
 <script src="js/kjv.js"></script>
 <script src="js/vendor/qrcode.js"></script>
-<!-- Tesseract (photo scan) is loaded on demand by loadTesseract() in app.js when an adult opens the word-list editor, so children's devices never fetch it. -->
 <script src="js/app.js"></script>
 </body>
 </html>

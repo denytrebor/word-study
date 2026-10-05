@@ -716,6 +716,12 @@ const Sync = (function () {
   }
   const TS = () => firebase.firestore.FieldValue.serverTimestamp();
 
+  // Firebase ID token for calling our own Worker's API (anonymous auth is fine).
+  async function getIdToken() {
+    await authedUid();
+    return firebase.auth().currentUser.getIdToken();
+  }
+
   // Creates a class owned by this device and returns the two secrets that must
   // be printed ONCE: the teacher key (other teacher devices) and the class-device
   // key (shared classroom tablets). Only their SHA-256 hashes are stored.
@@ -963,6 +969,7 @@ const Sync = (function () {
   }
 
   return {
+    getIdToken,
     getClassSession, setClassSession, classMode, isConnected,
     createClass, redeemKey, enrolStudent, replaceCard, redeemCard, rememberBoundStudent,
     listStudentDevices, listClassDevices, removeClassDevice, reportKioskActivity, fetchClassMeta, leaveClass, newKey, unbindStudent, checkSession,

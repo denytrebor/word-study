@@ -1,17 +1,26 @@
 {
   // Second home for Word Study: https://wordstudy.trebor.me, served by
-  // Cloudflare (static assets, no Worker code). The original GitHub Pages site
-  // (denytrebor.github.io/word-study) is untouched and keeps working, so the
-  // kids' installed copies are unaffected. Same Firebase backend, same code.
+  // Cloudflare. The original GitHub Pages site (denytrebor.github.io/word-study)
+  // is untouched and keeps working, so the kids' installed copies are
+  // unaffected. Same Firebase backend, same code.
+  //
+  // The Worker (worker/index.js) serves the static files and one API route,
+  // /api/extract-words, which reads a photo/pasted text of a word list. It uses
+  // Claude when the ANTHROPIC_API_KEY secret is set (`npx wrangler secret put
+  // ANTHROPIC_API_KEY`), else Workers AI as a weaker fallback.
   //
   // Deploy:  python tools/stage-cloudflare.py && npx wrangler deploy
   // (stage-cloudflare.py copies ONLY the site files into .cf-dist/, so the
   // experiments/, docs/, Temp/ folders and the zip never get uploaded.)
   "name": "word-study",
+  "main": "worker/index.js",
   "compatibility_date": "2026-10-01",
   "assets": {
-    "directory": "./.cf-dist"
+    "directory": "./.cf-dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
   },
+  "ai": { "binding": "AI" },
   // Creates the DNS record for the hostname as part of the deploy.
   "routes": [{ "pattern": "wordstudy.trebor.me", "custom_domain": true }],
   // Serve ONLY on the custom domain (same reasoning as family-organizer).

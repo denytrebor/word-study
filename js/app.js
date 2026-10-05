@@ -3014,13 +3014,12 @@
     document.getElementById("catalog-paste-input").value = "";
     document.getElementById("catalog-preview").classList.add("hidden");
     document.getElementById("btn-save-catalog").classList.add("hidden");
-    document.getElementById("catalog-scan-merge-confirm").classList.add("hidden");
     document.getElementById("catalog-scan-status").textContent = "";
     document.getElementById("btn-copy-catalog-link").classList.toggle("hidden", code === LOCAL_CATALOG);
     showScreen("catalog-editor");
     renderCatalogWeeksManager();
     refreshCatalogUndoButton();
-    loadTesseract(); // fire-and-forget; the scan button reports if it isn't ready
+    prefillQuickAdd();
 
     // Ownership is a soft guardrail (same posture as household/catalog
     // codes themselves), not a hard permission — it just keeps someone from
@@ -3082,76 +3081,63 @@
     if (code && code !== LOCAL_CATALOG) copyToClipboard(inviteURL("catalog", code));
   });
 
-  // OCR photo import: entirely client-side (Tesseract.js runs as WASM in the
-  // browser — the photo is never uploaded anywhere), so this introduces no
-  // new attack surface and needs no backend, matching the rest of this app's
-  // architecture. It only ever FILLS the existing paste box, never saves on
-  // its own — a photographed workbook page (multi-word entries especially,
-  // see A5's Scramble fix) won't OCR cleanly enough to trust unread, so this
-  // has to stay "get text into the box," not "point phone, done."
-  // "append" or "replace" — how the next scan's text joins what's in the box.
-  // Set by the merge prompt below; defaults to replace since an empty box has
-  // nothing to preserve.
-  let scanMergeMode = "replace";
+  // Quick add: a teacher photographs (or pastes) the school's list and a vision
+  // model on our own Worker (worker/index.js, POST /api/extract-words) turns it
+  // into words. It only ever FILLS the paste box below — nothing is saved until
+  // the teacher previews and saves — and the photos stay on screen beside the
+  // result so they can be checked against the page. The previous in-browser
+  // OCR (Tesseract) could not read real workbook pages and was removed.
+  const WORKER_ORIGIN = /(^|\.)trebor\.me$|^localhost$|^127\.0\.0\.1$/.test(location.hostname) ? "" : "https://wordstudy.trebor.me";
+  const QA_MAX_PHOTOS = 4;
+  const QA_MAX_SIDE = 2000;
+  let qaPhotos = []; // { dataUrl }
 
-  // Loaded only when an adult opens the word-list editor (see
-  // openCatalogEditor) — it used to be a <script> tag on every page load, which
-  // pulled a third-party library onto every child's device for a feature only
-  // a teacher uses.
-  let tesseractLoading = null;
-  function loadTesseract() {
-    if (typeof Tesseract !== "undefined") return Promise.resolve(true);
-    if (!tesseractLoading) {
-      tesseractLoading = new Promise((resolve) => {
-        const el = document.createElement("script");
-        el.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
-        el.onload = () => resolve(true);
-        el.onerror = () => { tesseractLoading = null; resolve(false); };
-        document.head.appendChild(el);
-      });
-    }
-    return tesseractLoading;
+  function renderQaPhotos() {
+    const wrap = document.getElementById("qa-photos");
+    wrap.innerHTML = "";
+    qaPhotos.forEach((p, i) => {
+      const box = document.createElement("div");
+      box.className = "qa-photo";
+      const img = document.createElement("img");
+      img.src = p.dataUrl;
+      img.alt = `Photo ${i + 1} of the word list`;
+      img.addEventListener("click", () => img.classList.toggle("qa-photo-big"));
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "qa-photo-x";
+      x.setAttribute("aria-label", `Remove photo ${i + 1}`);
+      x.textContent = "✕";
+      x.addEventListener("click", () => { qaPhotos.splice(i, 1); renderQaPhotos(); });
+      box.append(img, x);
+      wrap.appendChild(box);
+    });
+    document.getElementById("btn-catalog-scan").textContent =
+      qaPhotos.length ? "📷 Add another photo" : "📷 Add a photo of the list";
   }
 
-  function startCatalogScan() {
-    if (typeof Tesseract === "undefined") {
-      toast("Scan isn't available right now (needs an internet connection to load the first time) — you can still paste words by hand below.");
-      return;
-    }
-    document.getElementById("catalog-scan-input").click();
+  function prefillQuickAdd() {
+    qaPhotos = [];
+    renderQaPhotos();
+    document.getElementById("qa-text").value = "";
+    const grades = Array.from(new Set((state.catalogWeeks || []).map((w) => w.grade)));
+    const grade = grades.length === 1 ? grades[0] : ((state.profile && state.profile.grade) || "");
+    document.getElementById("qa-grade").value = grade;
+    refreshQuickAddWeek();
   }
+  function refreshQuickAddWeek() {
+    const grade = document.getElementById("qa-grade").value.trim();
+    const nums = (state.catalogWeeks || []).filter((w) => w.grade === grade).map((w) => w.weekNumber || 0);
+    document.getElementById("qa-week").value = nums.length ? Math.max(...nums) + 1 : 1;
+  }
+  document.getElementById("qa-grade").addEventListener("change", refreshQuickAddWeek);
 
   document.getElementById("btn-catalog-scan").addEventListener("click", () => {
-    const confirmBox = document.getElementById("catalog-scan-merge-confirm");
-    if (document.getElementById("catalog-paste-input").value.trim()) {
-      document.getElementById("catalog-scan-status").textContent = "";
-      confirmBox.classList.remove("hidden");
-      return;
-    }
-    confirmBox.classList.add("hidden");
-    scanMergeMode = "replace";
-    startCatalogScan();
-  });
-  document.getElementById("btn-catalog-scan-append").addEventListener("click", () => {
-    document.getElementById("catalog-scan-merge-confirm").classList.add("hidden");
-    scanMergeMode = "append";
-    startCatalogScan();
-  });
-  document.getElementById("btn-catalog-scan-replace").addEventListener("click", () => {
-    document.getElementById("catalog-scan-merge-confirm").classList.add("hidden");
-    scanMergeMode = "replace";
-    startCatalogScan();
-  });
-  document.getElementById("btn-catalog-scan-cancel").addEventListener("click", () => {
-    document.getElementById("catalog-scan-merge-confirm").classList.add("hidden");
+    if (qaPhotos.length >= QA_MAX_PHOTOS) { toast(`Up to ${QA_MAX_PHOTOS} photos at a time.`); return; }
+    document.getElementById("catalog-scan-input").click();
   });
 
-  // Decode to a bitmap with EXIF orientation already applied. Phone cameras
-  // record "which way was the phone held" as an EXIF tag rather than rotating
-  // the pixels, so the stored pixels are often sideways or upside down versus
-  // what the person saw in their gallery. `from-image` is the spec default in
-  // current browsers, but older WebKit defaulted to `none` and shipped the raw
-  // pixels — asking explicitly costs nothing and removes the guesswork.
+  // Decode to a bitmap with EXIF orientation already applied (phone cameras
+  // store "how the phone was held" as a tag, not in the pixels).
   async function decodeOriented(file) {
     if (typeof createImageBitmap === "function") {
       try { return await createImageBitmap(file, { imageOrientation: "from-image" }); }
@@ -3168,288 +3154,105 @@
     } finally { URL.revokeObjectURL(url); }
   }
 
-  // Draw `src` rotated clockwise by `deg` (0/90/180/270), optionally scaled so
-  // its long side is at most `maxSide`.
-  function rotatedCanvas(src, deg, maxSide) {
-    const sw = src.width, sh = src.height;
-    const scale = maxSide ? Math.min(1, maxSide / Math.max(sw, sh)) : 1;
-    const w = Math.round(sw * scale), h = Math.round(sh * scale);
-    const swap = deg === 90 || deg === 270;
+  async function photoToDataUrl(file) {
+    const bmp = await decodeOriented(file);
+    const scale = Math.min(1, QA_MAX_SIDE / Math.max(bmp.width, bmp.height));
     const canvas = document.createElement("canvas");
-    canvas.width = swap ? h : w;
-    canvas.height = swap ? w : h;
-    const ctx = canvas.getContext("2d");
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate(deg * Math.PI / 180);
-    ctx.drawImage(src, -w / 2, -h / 2, w, h);
-    return canvas;
-  }
-
-  // Tesseract only reads text that runs left-to-right, so a page photographed
-  // sideways comes back as pure noise rather than as a bad-but-fixable scan —
-  // and a workbook held in one hand gets photographed sideways constantly.
-  // EXIF alone doesn't save us: it records how the phone was held, not how the
-  // page was oriented under it.
-  //
-  // So: OCR a small copy at all four right-angle rotations and keep the one
-  // Tesseract is most confident about. On the test page (a sideways Abeka
-  // spelling list) the upright rotation scored 48 against 26-30 for the other
-  // three — the margin is wide because wrong-way text doesn't resolve into
-  // words at all. Probing at 1000px keeps all four passes to a few seconds;
-  // the real pass then re-reads at full resolution, which measurably matters:
-  // the same photo yielded 26 of 33 target words at native size but only 20 at
-  // 2400px. Confidence is a fine orientation *comparator* and a poor accuracy
-  // gauge — it barely moved (61 vs 64) across that same drop. Grayscale and
-  // autocontrast passes also scored worse (22/33), so the photo goes to
-  // Tesseract untouched apart from the rotation.
-  const OCR_PROBE_SIDE = 1000;
-  const OCR_MAX_SIDE = 4500; // only to bound canvas memory on huge images
-
-  // Page segmentation mode 11, "sparse text": find words anywhere, without
-  // assuming the page is flowing paragraphs. Tesseract's default (mode 3,
-  // fully automatic) tries to model the page as prose and does badly on a
-  // workbook page, which is short numbered entries in three columns wrapped
-  // around illustrations — it merges across the column gutters and drops
-  // whole entries. On the test page this one parameter took word recovery
-  // from 23/33 to 29/33 at the same speed.
-  //
-  // It also makes the orientation probe more decisive: the upright rotation
-  // scores 60 against 29-34, where mode 3's confidences were close enough to
-  // pick the wrong way up. So both passes use it.
-  //
-  // Things measured and rejected, so they don't get retried: upscaling 1.5x
-  // (27/33) and Sauvola adaptive thresholding (27/33) both scored WORSE than
-  // the untouched photo, as did plain grayscale + autocontrast (22/33).
-  const OCR_PAGE_MODE = "11";
-
-  async function scanForOrientation(worker, bitmap, status) {
-    const angles = [0, 90, 180, 270];
-    let best = { deg: 0, confidence: -1 };
-    for (let i = 0; i < angles.length; i++) {
-      status.textContent = `Checking which way up… ${i + 1} of ${angles.length}`;
-      const { data } = await worker.recognize(rotatedCanvas(bitmap, angles[i], OCR_PROBE_SIDE));
-      if (data.confidence > best.confidence) best = { deg: angles[i], confidence: data.confidence };
-    }
-    return best.deg;
-  }
-
-  // ---- Pulling a numbered word list out of the raw scan -------------------
-  //
-  // A photographed workbook page OCRs to ~156 lines of which only ~19% carry
-  // a real list word; the rest is the poem, the illustrations' stray marks,
-  // the Pro Tip box and debris. Dumping all of that in the box is what made
-  // the scan feel broken even after the read itself got good. When the page
-  // IS a numbered list, reading the numbers lets us emit just the words, in
-  // the page's own order, and drop the other ~127 lines entirely.
-
-  // OCR misreads the marker as often as the word: "I." for "1.", "l0." for
-  // "10.". Repair only digit-lookalikes, then require a plausible list number.
-  function markerToNumber(raw) {
-    const digits = raw.replace(/[Il|]/g, "1").replace(/[OoQ]/g, "0").replace(/[^0-9]/g, "");
-    if (!digits) return null;
-    const n = parseInt(digits.slice(-2), 10);
-    return n >= 1 && n <= 60 ? n : null;
-  }
-
-  // Cheap "is this a word at all" test. Deliberately NOT a dictionary: the
-  // page's real answer can be a rare word (subtrahend), and the classic OCR
-  // error here is daily -> dally, which is itself a real word — so a
-  // dictionary would pass the actual mistake and flag the actual answer.
-  const OCR_STOP_WORDS = new Set(["the", "a", "an", "and", "of", "to", "in", "is", "it", "for",
-    "on", "at", "or", "that", "this", "with", "means", "helps", "might", "seeing"]);
-  function looksLikeWord(w) {
-    const s = (w || "").replace(/[^A-Za-z'’-]/g, "");
-    if (s.length < 3) return false;
-    if (OCR_STOP_WORDS.has(s.toLowerCase())) return false;
-    if (!/[aeiouy]/i.test(s)) return false;   // no vowel: debris
-    if (/(.)\1\1/.test(s)) return false;      // "111", "lll"
-    return true;
-  }
-
-  function collectNumbered(text) {
-    const found = [];
-    text.split("\n").forEach((line, i) => {
-      const m = line.trim().match(/^([0-9IlOoQ%|\]]{1,3})[.,)]\s*(.+)$/);
-      if (!m) return;
-      const n = markerToNumber(m[1]);
-      if (n === null) return;
-      // A vocabulary entry is "word—definition", so the word is everything
-      // before the dash. OCR sometimes splits a long word across a space
-      // ("archi pelago—a group of many islands"), which taking the first
-      // token alone truncated to "archi". Re-join a short leading fragment
-      // with a lowercase continuation; a genuinely multi-word entry keeps
-      // its space because the first part won't be a short fragment.
-      let head = m[2].split(/[—–]|,\s|\s-\s/)[0].trim();
-      const parts = head.split(/\s+/).filter(Boolean);
-      let word;
-      if (parts.length === 2 && parts[0].length <= 6 && parts[1].length <= 6 && /^[a-z]/.test(parts[1])) {
-        // "archi pelago" -> archipelago. Both halves must be short: the tail
-        // of a split word is a fragment, so a long second token ("Orrid
-        // extremely") is a separate word and joining it makes things worse.
-        word = parts.join("");
-      } else if (parts.length === 1) {
-        word = parts[0];
-      } else {
-        // Several tokens: either a real multi-word entry ("1 and 2 Samuel",
-        // which this curriculum genuinely has) or OCR debris trailing the
-        // word ("brillian 111 lliantly"). Keep it whole only if every token
-        // is clean; otherwise fall back to the first token.
-        const clean = parts.every((p) => /^[A-Za-z'’-]+$/.test(p) || /^\d{1,2}$/.test(p))
-          && !parts.some((p) => /(.)\1\1/.test(p));
-        word = clean && parts.length <= 4 ? parts.join(" ") : parts[0];
-      }
-      word = word.replace(/[^A-Za-z0-9'’ -]/g, "").trim();
-      if (word) found.push({ n, word, line: i });
-    });
-    return found;
-  }
-
-  // A page can carry several independent numbered runs side by side (this
-  // workbook has a decorative "1. might" two columns from "1. submarine").
-  // A real entry sits near its own neighbours in reading order, so proximity
-  // to n-1/n+1 decides a collision — that fixed item 1 where confidence alone
-  // had picked the decoration.
-  function pickNumbered(found) {
-    const byNum = new Map();
-    found.forEach((f) => {
-      if (!byNum.has(f.n)) byNum.set(f.n, []);
-      byNum.get(f.n).push(f);
-    });
-    const chosen = new Map();
-    for (const [n, list] of byNum) {
-      let best = null, bestScore = -1;
-      for (const c of list) {
-        const neighbours = found.filter((o) =>
-          (o.n === n - 1 || o.n === n + 1) && Math.abs(o.line - c.line) <= 6).length;
-        const score = neighbours * 10 + (looksLikeWord(c.word) ? 1 : 0);
-        if (score > bestScore) { bestScore = score; best = c; }
-      }
-      chosen.set(n, best.word);
-    }
-    return chosen;
-  }
-
-  // Two passes of the SAME engine in different page-segmentation modes, not
-  // two different OCR engines: mode 11 (sparse text) reads the list cleanly,
-  // mode 6 (uniform block) reads the warped lower half better. Merging them
-  // took the sorted list from 23 to 25 of the page's 33 known entries. Where
-  // they disagree the entry is flagged rather than silently resolved.
-  function mergeNumbered(primary, secondary) {
-    const nums = [...new Set([...primary.keys(), ...secondary.keys()])].sort((a, b) => a - b);
-    return nums.map((n) => {
-      const a = primary.get(n), b = secondary.get(n);
-      let word = a || b;
-      const disagree = a && b && a.toLowerCase() !== b.toLowerCase();
-      if (disagree) {
-        const la = a.toLowerCase(), lb = b.toLowerCase();
-        // One pass truncating a word the other read in full is the common
-        // disagreement (archi / archipelago), and it isn't really a conflict
-        // — take the longer reading and don't flag it.
-        if (lb.startsWith(la) || la.startsWith(lb)) {
-          word = a.length >= b.length ? a : b;
-          return { n, word, uncertain: !looksLikeWord(word) };
-        }
-        if (looksLikeWord(b) && !looksLikeWord(a)) word = b;
-      }
-      return { n, word, uncertain: Boolean(disagree) || !looksLikeWord(word) };
-    });
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    if (bmp.close) bmp.close();
+    return canvas.toDataURL("image/jpeg", 0.85);
   }
 
   document.getElementById("catalog-scan-input").addEventListener("change", async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = ""; // lets picking the SAME file again re-fire change
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
     const status = document.getElementById("catalog-scan-status");
-    const scanBtn = document.getElementById("btn-catalog-scan");
-    scanBtn.disabled = true;
-    status.textContent = "Scanning… (this can take a bit on a big photo)";
-    let worker = null;
+    for (const f of files) {
+      if (qaPhotos.length >= QA_MAX_PHOTOS) break;
+      try { qaPhotos.push({ dataUrl: await photoToDataUrl(f) }); }
+      catch (err) { status.textContent = "Couldn't open that photo — try taking it again."; }
+    }
+    renderQaPhotos();
+  });
+
+  function termStartFor(grade, weekNumber) {
+    const existing = (state.catalogWeeks || []).find((w) => w.grade === grade && w.weekStartDate);
+    if (existing) return impliedSeriesStart(existing);
+    // First week for this grade: make this week's Monday the week being added.
+    const d = new Date(mondayOfThisWeek() + "T00:00:00");
+    d.setDate(d.getDate() - (weekNumber - 1) * 7);
+    return dateToLocalStr(d);
+  }
+
+  function extractionToPaste(result, grade, fallbackWeek) {
+    const weeks = result.weeks.filter((w) => w.spelling.length || w.vocabulary.length);
+    const out = [];
+    const nums = weeks.map((w, i) => w.week || (weeks.length === 1 ? fallbackWeek : fallbackWeek + i));
+    out.push(`GRADE ${grade} (starts ${termStartFor(grade, Math.min(...nums))})`);
+    weeks.forEach((w, i) => {
+      out.push("", `WEEK ${nums[i]}`);
+      if (w.verse) out.push(`VERSE ${w.verse}`);
+      w.spelling.forEach((s) => out.push(s));
+      w.vocabulary.forEach((v) => out.push(v.definition ? `${v.word}, ${v.definition}` : v.word));
+    });
+    return { text: out.join("\n"), weeks, nums };
+  }
+
+  document.getElementById("btn-qa-read").addEventListener("click", async () => {
+    const status = document.getElementById("catalog-scan-status");
+    const btn = document.getElementById("btn-qa-read");
+    const text = document.getElementById("qa-text").value.trim();
+    const grade = document.getElementById("qa-grade").value.trim();
+    const weekNumber = parseInt(document.getElementById("qa-week").value, 10);
+    if (!qaPhotos.length && !text) { status.textContent = "Add a photo of the list, or paste the words first."; return; }
+    if (!grade) { status.textContent = "Which grade is this list for? Type it in the Grade box."; return; }
+    if (!(weekNumber >= 1)) { status.textContent = "Which week number is this? (Week 1 is the first week of the term.)"; return; }
+    if (!firestoreReady()) { status.textContent = "Reading photos needs a connection to the class. You can still type or paste into the box below."; return; }
+    btn.disabled = true;
+    status.textContent = qaPhotos.length ? "Reading the page… (about 10–20 seconds)" : "Reading the words…";
     try {
-      const bitmap = await decodeOriented(file);
-      // One worker for all five passes: Tesseract.recognize() spins up and
-      // tears down a worker per call, which would dominate the runtime here.
-      // The percentage is only shown for the final full-resolution pass — the
-      // four probes have their own "1 of 4" counter, and letting the logger
-      // overwrite that with a percentage that restarts four times would read
-      // like the scan was stuck in a loop.
-      let showProgress = false;
-      worker = await Tesseract.createWorker("eng", 1, {
-        logger: (m) => {
-          if (showProgress && m.status === "recognizing text" && typeof m.progress === "number") {
-            status.textContent = `Reading the words… ${Math.round(m.progress * 100)}%`;
-          }
-        },
+      const token = await Sync.getIdToken();
+      const resp = await fetch(WORKER_ORIGIN + "/api/extract-words", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ images: qaPhotos.map((p) => p.dataUrl), text }),
       });
-      await worker.setParameters({ tessedit_pageseg_mode: OCR_PAGE_MODE });
-      const deg = await scanForOrientation(worker, bitmap, status);
-      showProgress = true;
-      status.textContent = "Reading the words…";
-      const page = rotatedCanvas(bitmap, deg, OCR_MAX_SIDE);
-      const { data } = await worker.recognize(page);
-      const rawText = (data && data.text || "").trim();
-      if (!rawText) {
-        if (bitmap.close) bitmap.close();
-        status.textContent = "Couldn't read any text in that photo — try a clearer, brighter shot, or paste by hand.";
+      if (resp.status === 429) { status.textContent = "That's a lot of scans in a short time — wait a few minutes, or paste the words by hand."; return; }
+      if (!resp.ok) throw new Error("http " + resp.status);
+      const result = await resp.json();
+      const built = extractionToPaste(result, grade, weekNumber);
+      if (!built.weeks.length) {
+        status.textContent = "Couldn't find any words in that. Try a clearer, brighter, straight-on photo, or paste the words.";
         return;
       }
-
-      // Second pass in a different segmentation mode, for the merge above.
-      // Only worth its ~3s when the page actually looks like a numbered list.
-      let entries = [];
-      const primary = pickNumbered(collectNumbered(rawText));
-      if (primary.size >= 3) {
-        status.textContent = "Cross-checking the list…";
-        await worker.setParameters({ tessedit_pageseg_mode: "6" });
-        const second = await worker.recognize(page);
-        await worker.setParameters({ tessedit_pageseg_mode: OCR_PAGE_MODE });
-        entries = mergeNumbered(primary, pickNumbered(collectNumbered(second.data.text || "")));
-      }
-      if (bitmap.close) bitmap.close();
-
-      // The box feeds parseCatalogText, which turns each whole line into one
-      // word — so the numbering must NOT go in, or the catalog ends up with a
-      // word literally called "1. submarine". The numbers' job is ordering and
-      // the gap report; only the words themselves are written.
-      const usingList = entries.length >= 3;
-      const text = usingList ? entries.map((e) => e.word).join("\n") : rawText;
-
       const box = document.getElementById("catalog-paste-input");
       const previous = box.value;
-      box.value = (scanMergeMode === "append" && previous.trim()) ? previous + "\n\n" + text : text;
+      box.value = built.text;
       box.scrollIntoView({ behavior: "smooth", block: "center" });
-
-      if (usingList) {
-        const nums = entries.map((e) => e.n);
-        const gaps = [];
-        for (let n = Math.min(...nums); n <= Math.max(...nums); n++) if (!nums.includes(n)) gaps.push(n);
-        const shaky = entries.filter((e) => e.uncertain).map((e) => e.word);
-        let msg = `Found ${entries.length} numbered words, in the page's order.`;
-        if (shaky.length) msg += ` Check these — they read poorly: ${shaky.join(", ")}.`;
-        if (gaps.length) msg += ` Couldn't read ${gaps.length === 1 ? "number" : "numbers"} ${gaps.join(", ")} — add ${gaps.length === 1 ? "it" : "them"} by hand.`;
-        status.textContent = msg + " ";
-      } else {
-        status.textContent = "Scanned — read it over and fix anything wrong before previewing. ";
+      const counts = built.weeks.map((w, i) => `Week ${built.nums[i]}: ${w.spelling.length} spelling + ${w.vocabulary.length} vocabulary`).join("; ");
+      let msg = `Read it. ${counts}. Compare with the page (tap a photo to enlarge), fix anything wrong in the box, then Preview and Save.`;
+      if (result.engine === "workers-ai") msg += " (Basic reader in use — check every word carefully.)";
+      status.textContent = msg + " ";
+      if (result.unsure && result.unsure.length) {
+        const p = document.createElement("div");
+        p.className = "qa-unsure";
+        p.textContent = "Please double-check: " + result.unsure.join("; ");
+        status.appendChild(p);
       }
-      // Replacing throws away whatever was in the box, so it needs a way back:
-      // a scan that reads badly shouldn't cost the text it landed on top of.
-      if (previous.trim() && box.value !== previous + "\n\n" + text) {
+      if (previous.trim()) {
         const undo = document.createElement("button");
         undo.type = "button";
         undo.className = "link-btn";
-        undo.textContent = "Undo replace";
-        undo.addEventListener("click", () => {
-          box.value = previous;
-          status.textContent = "Put the previous text back.";
-        });
+        undo.textContent = "Undo (put the old text back)";
+        undo.addEventListener("click", () => { box.value = previous; status.textContent = "Put the previous text back."; });
         status.appendChild(undo);
       }
     } catch (err) {
-      status.textContent = "Scan failed — try again, or paste the words by hand below.";
+      status.textContent = "Couldn't read that right now — check the internet connection and try again, or paste the words into the box below.";
     } finally {
-      // Workers hold a WASM heap and their own thread; leaking one per scan
-      // would pile up across repeated imports on a phone.
-      if (worker) { try { await worker.terminate(); } catch (e) { /* already gone */ } }
-      scanBtn.disabled = false;
+      btn.disabled = false;
     }
   });
 

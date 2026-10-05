@@ -1463,3 +1463,11 @@ body.class-staff .parent-self-manage,
 body.class-parent .parent-self-manage { display: none !important; }
 
 body.class-parent .psc-edit-toggle { display: none !important; }
+
+/* Quick add (photo / paste -> words) in the word-list editor */
+.qa-photos { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.qa-photo { position: relative; }
+.qa-photo img { height: 84px; width: auto; max-width: 120px; object-fit: cover; border-radius: 8px; border: 2px solid var(--muted, #888); cursor: zoom-in; }
+.qa-photo img.qa-photo-big { position: fixed; inset: 4vh 4vw; z-index: 50; height: 92vh; width: 92vw; max-width: none; object-fit: contain; background: #000; cursor: zoom-out; }
+.qa-photo-x { position: absolute; top: -6px; right: -6px; width: 26px; height: 26px; border-radius: 50%; border: none; background: #c0392b; color: #fff; font-size: 14px; line-height: 1; cursor: pointer; }
+.qa-unsure { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: #fff3cd; color: #5c4400; font-weight: 600; }
