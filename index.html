@@ -783,7 +783,7 @@
 <script src="js/starter-lists.js"></script>
 <script src="js/kjv.js"></script>
 <script src="js/vendor/qrcode.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<!-- Tesseract (photo scan) is loaded on demand by loadTesseract() in app.js when an adult opens the word-list editor, so children's devices never fetch it. -->
 <script src="js/app.js"></script>
 </body>
 </html>

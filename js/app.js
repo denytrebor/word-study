@@ -77,6 +77,21 @@
     return String(s).trim().replace(/\s+/g, " ").toLowerCase();
   }
 
+  // Grades are compared as exact strings everywhere (week selection, reward
+  // eligibility), so "3rd" or "Grade 3" typed for a child silently broke word
+  // delivery. Canonicalise at the point of entry: "3rd" / "Grade 3" / "third"
+  // become "3"; "Kindergarten" becomes "K"; anything unrecognised is kept.
+  function normalizeGradeInput(raw) {
+    let g = String(raw == null ? "" : raw).trim().replace(/^grade\s*/i, "").trim();
+    const words = { first: "1", second: "2", third: "3", fourth: "4", fifth: "5", sixth: "6", seventh: "7", eighth: "8", ninth: "9", tenth: "10", eleventh: "11", twelfth: "12", kindergarten: "K", kinder: "K" };
+    const lower = g.toLowerCase();
+    if (words[lower]) return words[lower];
+    const m = lower.match(/^(\d{1,2})(?:st|nd|rd|th)$/);
+    if (m) return m[1];
+    if (lower === "k") return "K";
+    return g;
+  }
+
   function shuffle(arr) {
     const a = arr.slice();
     for (let i = a.length - 1; i > 0; i--) {
@@ -1554,7 +1569,7 @@
   function createStudentProfile(name, grade) {
     const profiles = getProfiles();
     const studentCount = profiles.filter((x) => x.role !== "parent").length;
-    const p = { id: uid(), name, avatar: AVATARS[studentCount % AVATARS.length], stars: 0, grade: grade || "" };
+    const p = { id: uid(), name, avatar: AVATARS[studentCount % AVATARS.length], stars: 0, grade: normalizeGradeInput(grade) };
     profiles.push(p);
     saveProfiles(profiles);
     if (firestoreReady()) Sync.pushProfile(p);
@@ -1593,7 +1608,7 @@
       if (!line) return;
       const idx = line.indexOf(",");
       const name = (idx === -1 ? line : line.slice(0, idx)).trim().slice(0, ROSTER_NAME_MAX);
-      const grade = (idx === -1 ? "" : line.slice(idx + 1).trim()) || defaultGrade || "";
+      const grade = normalizeGradeInput((idx === -1 ? "" : line.slice(idx + 1).trim()) || defaultGrade || "");
       if (name) rows.push({ name, grade });
     });
     return rows;
@@ -2205,7 +2220,7 @@
     const form = document.querySelector(`.psc-edit-form[data-edit-form="${id}"]`);
     if (!form) return;
     const name = form.querySelector(".psc-edit-name").value.trim().slice(0, ROSTER_NAME_MAX);
-    const grade = form.querySelector(".psc-edit-grade").value.trim();
+    const grade = normalizeGradeInput(form.querySelector(".psc-edit-grade").value);
     if (!name) { toast("Type a name first"); return; }
     updateLocalProfileFields(id, { name, grade });
     const updated = getProfiles().find((p) => p.id === id);
@@ -2515,7 +2530,14 @@
     }
     week = pinned;
     if (!week && state.profile.grade) week = computeAutoWeek(state.catalogWeeks, state.profile.grade);
-    if (!week && state.catalogWeeks.length) week = state.catalogWeeks[0];
+    if (!week && state.catalogWeeks.length) {
+      week = state.catalogWeeks[0];
+      // Falling back to "the first week in the catalog" is kept (a home family
+      // may rely on it) but is no longer silent: it could be another grade's list.
+      if (state.profile.grade && week.grade !== state.profile.grade) {
+        toast(`No Grade ${state.profile.grade} list yet — showing Grade ${week.grade} words. Ask your teacher.`);
+      }
+    }
 
     if (!week) {
       state.selectedWeek = null;
@@ -2957,6 +2979,7 @@
     showScreen("catalog-editor");
     renderCatalogWeeksManager();
     refreshCatalogUndoButton();
+    loadTesseract(); // fire-and-forget; the scan button reports if it isn't ready
 
     // Ownership is a soft guardrail (same posture as household/catalog
     // codes themselves), not a hard permission — it just keeps someone from
@@ -3029,6 +3052,25 @@
   // Set by the merge prompt below; defaults to replace since an empty box has
   // nothing to preserve.
   let scanMergeMode = "replace";
+
+  // Loaded only when an adult opens the word-list editor (see
+  // openCatalogEditor) — it used to be a <script> tag on every page load, which
+  // pulled a third-party library onto every child's device for a feature only
+  // a teacher uses.
+  let tesseractLoading = null;
+  function loadTesseract() {
+    if (typeof Tesseract !== "undefined") return Promise.resolve(true);
+    if (!tesseractLoading) {
+      tesseractLoading = new Promise((resolve) => {
+        const el = document.createElement("script");
+        el.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+        el.onload = () => resolve(true);
+        el.onerror = () => { tesseractLoading = null; resolve(false); };
+        document.head.appendChild(el);
+      });
+    }
+    return tesseractLoading;
+  }
 
   function startCatalogScan() {
     if (typeof Tesseract === "undefined") {
