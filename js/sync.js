@@ -336,9 +336,9 @@ const Sync = (function () {
     // Firestore's .doc(path) treats "/" as path SEGMENT separators, not a
     // literal character — catalogRef(clean) below is
     // db.collection("catalogs").doc(clean), so a code containing a slash
-    // (e.g. "zoelive/weeks/7-w1") doesn't create a catalog with a slash in
+    // (e.g. "mycatalog/weeks/7-w1") doesn't create a catalog with a slash in
     // its name, it resolves straight into an existing nested document
-    // (catalogs/zoelive/weeks/7-w1, a real week doc). Found in the
+    // (catalogs/mycatalog/weeks/7-w1, a real week doc). Found in the
     // 2026-08-26 security review, reachable not just by typing it but via a
     // crafted ?catalog= invite link that pre-fills this field with no
     // visible slash — one click on Connect and it's misrouted. Reject

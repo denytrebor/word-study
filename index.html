@@ -162,12 +162,23 @@
         <h2 id="parent-dash-title">Parent / Teacher Dashboard</h2>
         <div class="parent-dash-actions">
           <button id="parent-dash-refresh" class="btn btn-ghost">🔄 Refresh</button>
+          <button id="parent-dash-words" class="btn btn-ghost">📝 Word Lists</button>
+          <button id="parent-dash-add-students" class="btn btn-ghost">➕ Add Students</button>
+          <button id="parent-dash-class-info" class="btn btn-ghost">🏫 Class Info</button>
           <button id="parent-dash-manage-avatars" class="btn btn-ghost">🎛️ Manage Avatars</button>
           <button id="parent-dash-school-overview" class="btn btn-ghost">🏫 School Overview</button>
           <button id="parent-dash-exit" class="btn btn-ghost">Exit</button>
         </div>
       </div>
       <div id="parent-dash-cards"></div>
+
+      <div class="parent-self-manage">
+        <p class="psc-section-title">This device</p>
+        <label class="hint" style="display:flex;gap:10px;align-items:center;text-align:left;">
+          <input type="checkbox" id="shared-device-toggle" style="width:auto;">
+          <span><strong>Shared device</strong> — always ask "Who's studying today?" when the app opens, so the next child never starts as the last one. Turn this on for classroom iPads and Chromebooks.</span>
+        </label>
+      </div>
 
       <div class="parent-self-manage">
         <p class="psc-section-title">Your profile</p>
@@ -200,7 +211,7 @@
     <!-- SCREEN: Catalog connect (word lists live here, separate from household privacy) -->
     <section id="screen-catalog-setup" class="screen">
       <h2>📚 Connect a Word Catalog</h2>
-      <p class="hint">Word lists live in a catalog, organized by grade and week — separate from your private scores. Keep it just for your household, or give it a memorable code (like your school's name) to share the same lists with another family. Their scores stay completely separate from yours either way.</p>
+      <p class="hint">Word lists live in a catalog, organized by grade and week — separate from your private scores. Leave the code blank to get a private, hard-to-guess one for your household or class (recommended). Only type a code if you are deliberately sharing the same lists with another family or class — anyone who knows a catalog code can change its words, so never use a guessable name like your school's. Their scores stay completely separate from yours either way.</p>
       <div class="new-profile-form">
         <input type="text" id="catalog-code-input" aria-label="Catalog code" placeholder="Catalog code (or leave blank)" spellcheck="false" autocomplete="off" autocorrect="off">
         <button id="btn-connect-catalog" class="btn btn-primary">Connect</button>

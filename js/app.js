@@ -287,7 +287,7 @@
     const section = document.getElementById("screen-" + id);
     section.classList.add("active");
     const header = document.getElementById("app-header");
-    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal" || id === "class-roster" || id === "class-info" || id === "school-overview");
+    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal" || id === "class-roster" || id === "class-info" || id === "school-overview" || (id === "catalog-editor" && !!state.parentProfile));
     endRetype();
     clearBuddy();
     window.scrollTo(0, 0);
@@ -1420,7 +1420,7 @@
       // *display* of it specifically would add friction with no real
       // security benefit.
       info.innerHTML = '<button id="btn-open-class-info" class="btn btn-ghost household-copy-btn">🏫 Class Info</button>';
-      document.getElementById("btn-open-class-info").addEventListener("click", () => openClassInfo());
+      document.getElementById("btn-open-class-info").addEventListener("click", () => openClassInfo("profiles"));
     } else if (typeof Sync !== "undefined") {
       info.innerHTML = '<button id="btn-open-household" class="btn btn-ghost household-copy-btn">🔗 Sync across devices</button>';
       document.getElementById("btn-open-household").addEventListener("click", () => showScreen("household"));
@@ -1601,15 +1601,25 @@
 
   let rosterParsePreview = [];
 
-  function openClassRoster() {
+  // Where the roster screen sends the teacher afterwards: the kid picker (the
+  // original entry) or the teacher dashboard (the new Add Students button).
+  let rosterReturnTo = "profiles";
+  function leaveClassRoster() {
+    if (rosterReturnTo === "dashboard" && state.parentProfile) { openParentDashboard(); return; }
+    renderProfiles();
+    showScreen("profiles");
+  }
+
+  function openClassRoster(returnTo) {
+    rosterReturnTo = returnTo === "dashboard" ? "dashboard" : "profiles";
     document.getElementById("roster-default-grade").value = "";
     document.getElementById("roster-paste-input").value = "";
     document.getElementById("roster-preview").classList.add("hidden");
     document.getElementById("btn-save-roster").classList.add("hidden");
     showScreen("class-roster");
   }
-  document.getElementById("btn-add-class-roster").addEventListener("click", openClassRoster);
-  document.getElementById("class-roster-exit").addEventListener("click", () => { renderProfiles(); showScreen("profiles"); });
+  document.getElementById("btn-add-class-roster").addEventListener("click", () => openClassRoster("profiles"));
+  document.getElementById("class-roster-exit").addEventListener("click", leaveClassRoster);
 
   document.getElementById("btn-preview-roster").addEventListener("click", () => {
     const text = document.getElementById("roster-paste-input").value;
@@ -1640,8 +1650,7 @@
     rosterParsePreview = [];
     toast(`Added ${count} student${count === 1 ? "" : "s"}!`);
     btn.disabled = false;
-    renderProfiles();
-    showScreen("profiles");
+    leaveClassRoster();
   });
 
   /* ---------------------------------------------------------------------
@@ -1665,14 +1674,15 @@
     } catch (e) { wrap.classList.add("hidden"); }
   }
 
-  function openClassInfo() {
+  function openClassInfo(returnTo) {
     const code = typeof Sync !== "undefined" ? Sync.getHouseholdCode() : null;
     if (!code) { toast("Create or join a household first"); return; }
     // Right after creating a household, screen-household is still active (the
     // teacher hasn't tapped "Join" yet — see btn-create-household) — send
     // "Back" there instead of to the profile picker so that password-save
     // flow isn't short-circuited by a detour through this screen.
-    classInfoReturnTo = (document.querySelector(".screen.active") || {}).id === "screen-household" ? "household" : "profiles";
+    classInfoReturnTo = returnTo === "dashboard" ? "dashboard"
+      : (document.querySelector(".screen.active") || {}).id === "screen-household" ? "household" : "profiles";
     document.getElementById("class-info-code-display").textContent = code;
     renderClassInfoQR(inviteURL("household", code));
     showScreen("class-info");
@@ -1686,8 +1696,9 @@
     if (code) copyToClipboard(inviteURL("household", code));
   });
   document.getElementById("class-info-exit").addEventListener("click", () => {
+    if (classInfoReturnTo === "dashboard" && state.parentProfile) { openParentDashboard(); return; }
     if (classInfoReturnTo === "profiles") renderProfiles();
-    showScreen(classInfoReturnTo);
+    showScreen(classInfoReturnTo === "dashboard" ? "profiles" : classInfoReturnTo);
   });
 
   /* ---------------------------------------------------------------------
@@ -1771,12 +1782,52 @@
 
   function openParentDashboard() {
     document.getElementById("parent-dash-title").textContent = `👋 ${state.parentProfile.name}`;
+    document.getElementById("shared-device-toggle").checked = isSharedDevice();
+    document.getElementById("parent-dash-class-info").classList.toggle("hidden", !firestoreReady());
     renderParentSelfManage();
     showScreen("parent-dashboard");
     loadParentDashboard();
   }
 
   document.getElementById("parent-dash-refresh").addEventListener("click", () => loadParentDashboard());
+
+  // Teacher actions that used to require signing in AS A CHILD (word lists) or
+  // living on the kid picker (add students, class info).
+  document.getElementById("parent-dash-words").addEventListener("click", async () => {
+    const btn = document.getElementById("parent-dash-words");
+    btn.disabled = true;
+    try {
+      // A synced class with no word list yet gets a private one with a random,
+      // hard-to-guess code — never a name someone could type to edit it.
+      if (firestoreReady() && !Sync.getCatalogCode()) {
+        let existing = null;
+        try { existing = await Sync.fetchHouseholdCatalogCode(); } catch (e) { /* offline */ }
+        if (existing) Sync.cacheCatalogCode(existing);
+        else {
+          await Sync.connectCatalog(generateCode(10));
+          toast("Word list created for this class.");
+        }
+      }
+      await ensureCatalogLoaded();
+      catalogEditorReturnTo = "dashboard";
+      await openCatalogEditor();
+    } catch (e) {
+      toast("Couldn't open the word lists — check your internet and try again.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  document.getElementById("parent-dash-add-students").addEventListener("click", () => openClassRoster("dashboard"));
+  document.getElementById("parent-dash-class-info").addEventListener("click", () => openClassInfo("dashboard"));
+
+  // Shared-device mode is a property of THIS device (a class iPad), not of the
+  // class, so it lives in localStorage and never syncs.
+  const SHARED_DEVICE_KEY = "ws_shared_device";
+  function isSharedDevice() { return localStorage.getItem(SHARED_DEVICE_KEY) === "1"; }
+  document.getElementById("shared-device-toggle").addEventListener("change", (e) => {
+    localStorage.setItem(SHARED_DEVICE_KEY, e.target.checked ? "1" : "0");
+    toast(e.target.checked ? "Shared device on — the app will ask who's studying each time." : "Shared device off.");
+  });
   document.getElementById("parent-dash-exit").addEventListener("click", () => {
     state.parentProfile = null;
     renderProfiles();
@@ -2915,7 +2966,7 @@
     // is readable by every household the catalog code is shared with, so the
     // code itself must never appear on it (see connectCatalog in sync.js).
     // Legacy catalogs carrying the old plaintext `ownerHousehold` field, and
-    // catalogs with no owner recorded at all (e.g. the real zoelive catalog,
+    // catalogs with no owner recorded at all (e.g. a long-standing school catalog
     // created before either existed), stay editable by everyone — failing
     // open keeps anything already live from being locked out.
     //
@@ -2950,8 +3001,18 @@
       } catch (e) { /* ignore — fail open to editable, matching the app's existing offline-friendly fallbacks */ }
     }
   }
-  document.getElementById("btn-manage-catalog").addEventListener("click", openCatalogEditor);
-  document.getElementById("catalog-editor-exit").addEventListener("click", () => { renderHome(); showScreen("home"); });
+  // The editor is reached from a child's Home (the original path) and now from
+  // the teacher dashboard, which needs no student context at all.
+  let catalogEditorReturnTo = "home";
+  document.getElementById("btn-manage-catalog").addEventListener("click", () => {
+    catalogEditorReturnTo = "home";
+    openCatalogEditor();
+  });
+  document.getElementById("catalog-editor-exit").addEventListener("click", () => {
+    if (catalogEditorReturnTo === "dashboard" && state.parentProfile) { openParentDashboard(); return; }
+    renderHome();
+    showScreen("home");
+  });
   document.getElementById("btn-copy-catalog-link").addEventListener("click", () => {
     const code = getCatalogCode();
     if (code && code !== LOCAL_CATALOG) copyToClipboard(inviteURL("catalog", code));
@@ -5826,7 +5887,7 @@
     const activeId = getActiveProfileId();
     const activeProfile = activeId && profiles.find((p) => p.id === activeId);
     // Parents are never auto-resumed — they re-enter their PIN every visit.
-    if (activeProfile && activeProfile.role !== "parent") {
+    if (activeProfile && activeProfile.role !== "parent" && !isSharedDevice()) {
       selectProfile(activeId);
     } else {
       showScreen("profiles");
