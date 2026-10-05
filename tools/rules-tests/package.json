@@ -3,7 +3,9 @@
   "private": true,
   "description": "Local Firestore emulator tests for docs/firestore.rules (no production access)",
   "scripts": {
-    "test": "node run.js"
+    "test": "node run.js",
+    "test:sync": "node run.js sync-integration.js",
+    "test:all": "node run.js tests.js && node run.js sync-integration.js"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^4.0.1",

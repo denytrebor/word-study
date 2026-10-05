@@ -17,7 +17,7 @@ if (javaBin) env.PATH = javaBin + path.delimiter + env.PATH;
 const fb = path.join(__dirname, "node_modules", ".bin", process.platform === "win32" ? "firebase.cmd" : "firebase");
 const r = spawnSync(
   fb,
-  ["emulators:exec", "--config", path.join(root, "firebase.json"), "--project", "demo-wordstudy", "--only", "firestore", "node tests.js"],
+  ["emulators:exec", "--config", path.join(root, "firebase.json"), "--project", "demo-wordstudy", "--only", "firestore", "node " + (process.argv[2] || "tests.js")],
   { cwd: __dirname, env, stdio: "inherit", shell: true }
 );
 process.exit(r.status === null ? 1 : r.status);

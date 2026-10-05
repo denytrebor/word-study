@@ -6,3 +6,4 @@
 # local test tooling (portable Java for the Firestore emulator)
 tools/.jre/
 tools/rules-tests/node_modules/
+tools/rules-tests/firestore-debug.log

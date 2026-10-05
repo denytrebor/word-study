@@ -60,6 +60,62 @@ const Sync = (function () {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
 
+  /* ----------------------------- School class session -----------------------------
+   * A device is EITHER a family device (household code) OR a school device
+   * (class session). Families keep working exactly as before; a school device
+   * never holds a class code at all — it holds proof, per device, of what it
+   * may do (see docs/firestore.rules). Modes:
+   *   staff  — a teacher device: sees the whole class
+   *   kiosk  — a shared classroom device: class word list only, no students
+   *   child  — a child's own device(s) bound by a card
+   *   parent — a parent device bound by a parent code (read-only)
+   * localStorage "ws_class_session" = { cid, mode, name, school, grade,
+   *   catalogCode, label, sids:[...] }.
+   */
+  const CLASS_KEY = "ws_class_session";
+
+  function getClassSession() {
+    try { return JSON.parse(localStorage.getItem(CLASS_KEY) || "null"); } catch (e) { return null; }
+  }
+  function setClassSession(s) {
+    if (s) localStorage.setItem(CLASS_KEY, JSON.stringify(s));
+    else localStorage.removeItem(CLASS_KEY);
+  }
+  function classMode() { const s = getClassSession(); return s ? s.mode : null; }
+  // True when there is anything to sync with: a family household or a class.
+  function isConnected() { return !!getHouseholdCode() || !!getClassSession(); }
+
+  // All secrets come from the browser's CSPRNG (never Math.random). The
+  // 32-character alphabet divides 256 evenly, so `byte & 31` is unbiased.
+  function randomCode(len) {
+    const bytes = new Uint8Array(len);
+    crypto.getRandomValues(bytes);
+    let s = "";
+    for (let i = 0; i < len; i++) s += CODE_CHARS[bytes[i] & 31];
+    return s;
+  }
+  // Unbiased pick from an arbitrary alphabet (rejection sampling).
+  function randomFrom(alphabet, len) {
+    const limit = 256 - (256 % alphabet.length);
+    let s = "";
+    while (s.length < len) {
+      const bytes = new Uint8Array(len * 2);
+      crypto.getRandomValues(bytes);
+      for (let i = 0; i < bytes.length && s.length < len; i++) if (bytes[i] < limit) s += alphabet[bytes[i] % alphabet.length];
+    }
+    return s;
+  }
+  async function sha256hex(text) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(text)));
+    return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // Codes are shown as groups ("KX7PM-R4TQ9") and typed by adults: forgive
+  // case, spaces and dashes. (The alphabet has no 0/O/1/I, so a typed O, 0, I
+  // or 1 can never be part of a real code.)
+  function normalizeSecret(raw) {
+    return String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  }
+
   /* ----------------------------- Household ----------------------------- */
 
   function getHouseholdCode() {
@@ -119,6 +175,11 @@ const Sync = (function () {
   }
 
   function profilesRef() {
+    const cs = getClassSession();
+    if (cs && cs.cid) {
+      if (!db) return null;
+      return db.collection("classes").doc(cs.cid).collection("profiles");
+    }
     const code = getHouseholdCode();
     if (!db || !code) return null;
     return db.collection("households").doc(code).collection("profiles");
@@ -206,6 +267,22 @@ const Sync = (function () {
   async function pushProfile(profile) {
     const ref = profileRef(profile.id);
     if (!ref || !(await ready)) return;
+    if (getClassSession()) {
+      // School child device: rules allow ONLY the reward fields on the student
+      // doc (never name, grade, class) and nothing on the roster doc. A shared
+      // classroom device and a parent device write nothing for students.
+      const mode = classMode();
+      if (mode !== "child") return;
+      return studentRef(profile.id).set({
+        avatar: profile.avatar || "", stars: profile.stars || 0,
+        currentStreak: profile.currentStreak || 0, bestStreak: profile.bestStreak || 0,
+        lastActiveDate: profile.lastActiveDate || "", recentTests: profile.recentTests || [],
+        unlocks: profile.unlocks || [], unlockDates: profile.unlockDates || {},
+        equippedAvatar: profile.equippedAvatar || "",
+        equippedTheme: profile.equippedTheme || "", lifetimeStars: profile.lifetimeStars || 0,
+        weekTrophies: profile.weekTrophies || {}, streakShields: profile.streakShields || 0,
+      }, { merge: true }).catch(warnWriteFailed("student " + profile.id));
+    }
     if (profile.role === "parent") {
       return ref.set({ name: profile.name || "", role: "parent", pin: profile.pin || "" }, { merge: true })
         .catch(warnWriteFailed("profile " + profile.id));
@@ -237,7 +314,7 @@ const Sync = (function () {
   async function pushProfileIdentity(profile) {
     const ref = profileRef(profile.id);
     if (!ref || !(await ready)) return;
-    const writes = [ref.set({ grade: profile.grade || "" }, { merge: true }).catch(warnWriteFailed("enrollment " + profile.id))];
+    const writes = [ref.set(getClassSession() ? { grade: profile.grade || "", displayName: profile.name || "" } : { grade: profile.grade || "" }, { merge: true }).catch(warnWriteFailed("enrollment " + profile.id))];
     const sRef = studentRef(profile.id);
     if (sRef) writes.push(sRef.set({ name: profile.name || "" }, { merge: true }).catch(warnWriteFailed("student " + profile.id)));
     return Promise.all(writes);
@@ -261,6 +338,12 @@ const Sync = (function () {
   }
 
   async function fetchHouseholdCatalogCode() {
+    const cs = getClassSession();
+    if (cs && cs.cid) {
+      if (!db || !(await ready)) return null;
+      const csnap = await db.collection("classes").doc(cs.cid).get();
+      return csnap.exists ? (csnap.data().catalogCode || null) : null;
+    }
     const hCode = getHouseholdCode();
     if (!hCode || !db || !(await ready)) return null;
     const snap = await db.collection("households").doc(hCode).get();
@@ -278,6 +361,7 @@ const Sync = (function () {
   // as before the split — zero changes needed upstream.
   function watchProfiles(onChange) {
     if (profilesUnsub) { profilesUnsub(); profilesUnsub = null; }
+    if (getClassSession() && classMode() !== "staff") return; // children/parents/class devices never list a roster
     const col = profilesRef();
     if (!col) return;
     profilesUnsub = col.onSnapshot({ includeMetadataChanges: true }, async (snap) => {
@@ -478,12 +562,24 @@ const Sync = (function () {
   // rather than on a profile. Shape: { [avatarId]: { active: bool, price: number } }.
 
   async function saveShopConfig(config) {
+    const cs = getClassSession();
+    if (cs && cs.cid) {
+      if (!db || !(await ready) || cs.mode !== "staff") return;
+      await db.collection("classes").doc(cs.cid).set({ shopConfig: config }, { merge: true });
+      return;
+    }
     const hCode = getHouseholdCode();
     if (!hCode || !db || !(await ready)) return;
     await db.collection("households").doc(hCode).set({ shopConfig: config }, { merge: true });
   }
 
   async function fetchShopConfig() {
+    const cs = getClassSession();
+    if (cs && cs.cid) {
+      if (!db || !(await ready)) return null;
+      const csnap = await db.collection("classes").doc(cs.cid).get();
+      return csnap.exists ? (csnap.data().shopConfig || null) : null;
+    }
     const hCode = getHouseholdCode();
     if (!hCode || !db || !(await ready)) return null;
     const snap = await db.collection("households").doc(hCode).get();
@@ -601,7 +697,223 @@ const Sync = (function () {
     return results.filter((snap) => snap && snap.exists).map((snap) => snap.data());
   }
 
+  /* ----------------------------- School API ----------------------------- */
+
+  async function authedUid() {
+    const okAuth = await ready;
+    if (!okAuth || !db) throw new Error("Sync not available");
+    const u = firebase.auth().currentUser;
+    if (!u) throw new Error("Not signed in");
+    return u.uid;
+  }
+  const TS = () => firebase.firestore.FieldValue.serverTimestamp();
+
+  // Creates a class owned by this device and returns the two secrets that must
+  // be printed ONCE: the teacher key (other teacher devices) and the class-device
+  // key (shared classroom tablets). Only their SHA-256 hashes are stored.
+  async function createClass({ name, school, grade, label }) {
+    const uid = await authedUid();
+    const cid = randomFrom("abcdefghijklmnopqrstuvwxyz0123456789", 20);
+    const teacherKey = randomCode(16), deviceKey = randomCode(16);
+    const catalogCode = randomCode(10);
+    const [th, dh] = await Promise.all([sha256hex(teacherKey), sha256hex(deviceKey)]);
+    const classRef = db.collection("classes").doc(cid);
+    const b1 = db.batch();
+    b1.set(classRef, { name, school, grade, catalogCode: "", createdBy: uid, createdAt: TS(), v: 1 });
+    b1.set(classRef.collection("staff").doc(uid), { kh: th, label: label || "Teacher device", at: Date.now() });
+    b1.set(db.collection("classKeys").doc(th), { classId: cid, role: "teacher", at: Date.now() });
+    b1.set(db.collection("classKeys").doc(dh), { classId: cid, role: "device", at: Date.now() });
+    await b1.commit();
+    // The class word list is created in a second batch: its rule needs this
+    // device to already BE staff, which only exists once batch 1 has committed.
+    const b2 = db.batch();
+    b2.set(db.collection("catalogs").doc(catalogCode), { classId: cid, createdAt: TS() });
+    b2.set(classRef, { catalogCode }, { merge: true });
+    await b2.commit();
+    setClassSession({ cid, mode: "staff", name, school, grade, catalogCode, label: label || "Teacher device", sids: [] });
+    localStorage.setItem(CATALOG_KEY, catalogCode);
+    return { cid, teacherKey, deviceKey, catalogCode };
+  }
+
+  // Turns this device into a teacher device or a shared classroom device,
+  // depending on what the key was issued for. Returns the session, or null for
+  // an unknown key.
+  async function redeemKey(rawKey, label) {
+    const uid = await authedUid();
+    const key = normalizeSecret(rawKey);
+    if (key.length !== 16) return null;
+    const h = await sha256hex(key);
+    const ks = await db.collection("classKeys").doc(h).get();
+    if (!ks.exists) return null;
+    const { classId, role } = ks.data();
+    const classRef = db.collection("classes").doc(classId);
+    if (role === "teacher") {
+      await classRef.collection("staff").doc(uid).set({ kh: h, label: label || "Teacher device", at: Date.now() });
+    } else {
+      await classRef.collection("kiosks").doc(uid).set({ kh: h, label: label || "Class device", at: Date.now(), lastActiveDate: "", answers: 0 });
+    }
+    const cs = await classRef.get();
+    const c = cs.exists ? cs.data() : {};
+    const session = {
+      cid: classId, mode: role === "teacher" ? "staff" : "kiosk",
+      name: c.name || "", school: c.school || "", grade: c.grade || "", catalogCode: c.catalogCode || "",
+      label: label || (role === "teacher" ? "Teacher device" : "Class device"), sids: [],
+    };
+    setClassSession(session);
+    if (session.catalogCode) localStorage.setItem(CATALOG_KEY, session.catalogCode);
+    return session;
+  }
+
+  // Teacher: enrols one child. Returns the codes — they exist only in this
+  // return value (the database keeps hashes), so the caller must print/keep them.
+  async function enrolStudent({ name, grade, avatar }) {
+    const cs = getClassSession();
+    if (!cs || cs.mode !== "staff") throw new Error("Not a teacher device");
+    await authedUid();
+    const sid = crypto.randomUUID();
+    const childCode = randomCode(10), parentCode = randomCode(10);
+    const [hc, hp] = await Promise.all([sha256hex(childCode), sha256hex(parentCode)]);
+    const classRef = db.collection("classes").doc(cs.cid);
+    const b = db.batch();
+    b.set(db.collection("students").doc(sid), { name, classId: cs.cid, avatar: avatar || "", stars: 0, currentStreak: 0, bestStreak: 0, lifetimeStars: 0 });
+    b.set(classRef.collection("profiles").doc(sid), { grade: grade || "", displayName: name, status: "active", joinedAt: Date.now() });
+    b.set(db.collection("studentCodes").doc(hc), { studentId: sid, classId: cs.cid, kind: "child", at: Date.now() });
+    b.set(db.collection("studentCodes").doc(hp), { studentId: sid, classId: cs.cid, kind: "parent", at: Date.now() });
+    b.set(classRef.collection("cards").doc(sid), { childHash: hc, parentHash: hp, issuedAt: Date.now(), issueCount: 1 });
+    await b.commit();
+    return { sid, name, grade: grade || "", childCode, parentCode };
+  }
+
+  // Teacher: "Issue a new card". Mints new codes, then revokes the old codes and
+  // EVERY device that was bound with them. Printed card = new; old = dead.
+  async function replaceCard(sid) {
+    const cs = getClassSession();
+    if (!cs || cs.mode !== "staff") throw new Error("Not a teacher device");
+    await authedUid();
+    const classRef = db.collection("classes").doc(cs.cid);
+    const cardRef = classRef.collection("cards").doc(sid);
+    const old = await cardRef.get();
+    const oldData = old.exists ? old.data() : {};
+    const childCode = randomCode(10), parentCode = randomCode(10);
+    const [hc, hp] = await Promise.all([sha256hex(childCode), sha256hex(parentCode)]);
+    const b = db.batch();
+    b.set(db.collection("studentCodes").doc(hc), { studentId: sid, classId: cs.cid, kind: "child", at: Date.now() });
+    b.set(db.collection("studentCodes").doc(hp), { studentId: sid, classId: cs.cid, kind: "parent", at: Date.now() });
+    b.set(cardRef, { childHash: hc, parentHash: hp, issuedAt: Date.now(), issueCount: (oldData.issueCount || 1) + 1 });
+    await b.commit();
+    const dead = db.batch();
+    if (oldData.childHash) dead.delete(db.collection("studentCodes").doc(oldData.childHash));
+    if (oldData.parentHash) dead.delete(db.collection("studentCodes").doc(oldData.parentHash));
+    await dead.commit();
+    const devs = await db.collection("students").doc(sid).collection("devices").get();
+    for (let i = 0; i < devs.docs.length; i += 4) {
+      const chunk = db.batch();
+      devs.docs.slice(i, i + 4).forEach((d) => chunk.delete(d.ref));
+      await chunk.commit();
+    }
+    return { sid, childCode, parentCode, revokedDevices: devs.docs.length };
+  }
+
+  async function listStudentDevices(sid) {
+    const snap = await db.collection("students").doc(sid).collection("devices").get();
+    return snap.docs.map((d) => Object.assign({ uid: d.id }, d.data()));
+  }
+  async function listClassDevices() {
+    const cs = getClassSession();
+    if (!cs || cs.mode !== "staff") return { staff: [], kiosks: [] };
+    const classRef = db.collection("classes").doc(cs.cid);
+    const [st, ki] = await Promise.all([classRef.collection("staff").get(), classRef.collection("kiosks").get()]);
+    return {
+      staff: st.docs.map((d) => Object.assign({ uid: d.id }, d.data())),
+      kiosks: ki.docs.map((d) => Object.assign({ uid: d.id }, d.data())),
+    };
+  }
+  async function removeClassDevice(kind, uid) {
+    const cs = getClassSession();
+    if (!cs || cs.mode !== "staff") throw new Error("Not a teacher device");
+    await db.collection("classes").doc(cs.cid).collection(kind === "staff" ? "staff" : "kiosks").doc(uid).delete();
+  }
+
+  // Child/parent: redeem a card. Looks up the hashed code, binds THIS device to
+  // that student, then reads what the confirmation screen needs. Returns null
+  // for an unknown/replaced code.
+  async function redeemCard(rawCode) {
+    const uid = await authedUid();
+    const code = normalizeSecret(rawCode);
+    if (code.length !== 10) return null;
+    const h = await sha256hex(code);
+    const cs = await db.collection("studentCodes").doc(h).get();
+    if (!cs.exists) return null;
+    const { studentId, classId, kind } = cs.data();
+    await db.collection("students").doc(studentId).collection("devices").doc(uid).set({ kind, h, at: Date.now() });
+    const [stu, cls, prof] = await Promise.all([
+      db.collection("students").doc(studentId).get(),
+      db.collection("classes").doc(classId).get(),
+      db.collection("classes").doc(classId).collection("profiles").doc(studentId).get(),
+    ]);
+    return {
+      sid: studentId, cid: classId, kind,
+      student: stu.exists ? stu.data() : {},
+      cls: cls.exists ? cls.data() : {},
+      grade: prof.exists ? (prof.data().grade || "") : "",
+    };
+  }
+
+  // Remembers a bound student on this device (a child device may hold siblings).
+  function rememberBoundStudent(result) {
+    const prev = getClassSession();
+    const mode = result.kind === "parent" ? "parent" : "child";
+    if (prev && prev.mode !== mode && prev.mode !== undefined && (prev.sids || []).length) {
+      throw new Error("This device is already set up as a " + prev.mode + " device");
+    }
+    const sids = Array.from(new Set(((prev && prev.cid === result.cid && prev.sids) || []).concat(result.sid)));
+    const session = {
+      cid: result.cid, mode, sids,
+      name: result.cls.name || "", school: result.cls.school || "", grade: result.cls.grade || "",
+      catalogCode: result.cls.catalogCode || "", label: "",
+    };
+    setClassSession(session);
+    if (session.catalogCode) localStorage.setItem(CATALOG_KEY, session.catalogCode);
+    return session;
+  }
+
+  // Shared classroom device: report how much it was used (a device-level count;
+  // it never knows which child). Debounced by the caller.
+  async function reportKioskActivity(deltaAnswers) {
+    const cs = getClassSession();
+    if (!cs || cs.mode !== "kiosk" || !deltaAnswers) return;
+    const uid = await authedUid();
+    await db.collection("classes").doc(cs.cid).collection("kiosks").doc(uid).update({
+      answers: firebase.firestore.FieldValue.increment(deltaAnswers),
+      lastActiveDate: new Date().toISOString().slice(0, 10),
+    }).catch(warnWriteFailed("kiosk activity"));
+  }
+
+  async function fetchClassMeta(cid) {
+    await authedUid();
+    const snap = await db.collection("classes").doc(cid).get();
+    return snap.exists ? snap.data() : null;
+  }
+
+  // Stop being a school device (a child's own device unbinds itself first).
+  async function leaveClass() {
+    const cs = getClassSession();
+    try {
+      const uid = await authedUid();
+      if (cs && (cs.mode === "child" || cs.mode === "parent")) {
+        for (const sid of cs.sids || []) await db.collection("students").doc(sid).collection("devices").doc(uid).delete().catch(() => {});
+      } else if (cs && cs.mode === "kiosk") {
+        await db.collection("classes").doc(cs.cid).collection("kiosks").doc(uid).delete().catch(() => {});
+      }
+    } catch (e) { /* offline: the local session is still cleared */ }
+    setClassSession(null);
+  }
+
   return {
+    getClassSession, setClassSession, classMode, isConnected,
+    createClass, redeemKey, enrolStudent, replaceCard, redeemCard, rememberBoundStudent,
+    listStudentDevices, listClassDevices, removeClassDevice, reportKioskActivity, fetchClassMeta, leaveClass,
+    randomCode, sha256hex, normalizeSecret,
     getHouseholdCode,
     createHousehold,
     joinHousehold,
