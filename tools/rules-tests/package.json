@@ -1,0 +1,13 @@
+{
+  "name": "word-study-rules-tests",
+  "private": true,
+  "description": "Local Firestore emulator tests for docs/firestore.rules (no production access)",
+  "scripts": {
+    "test": "node run.js"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^10.14.1",
+    "firebase-tools": "^13.35.1"
+  }
+}

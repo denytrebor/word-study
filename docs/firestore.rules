@@ -1,47 +1,41 @@
-// Recommended Firestore security rules for the Word Study app.
+// Firestore security rules for the Word Study app.
 //
-// ✅ APPLIED. Published in the Firebase console (Firestore Database → Rules)
-// for project `spelling-words-671aa`; the latest version went live 2026-09-02
-// and was behaviour-tested against production on 2026-10-05 (list denied on
-// households/students/catalogs, catalog-week and profile delete allowed,
-// progress/activity/student/household delete denied, unauthenticated denied).
-// Rules live in the console, not this repo: after editing this file, paste it
-// into Firebase console → Firestore Database → Rules and Publish.
+// STATUS: the families-only version of these rules (tools/rules-tests/
+// firestore.rules.v1-live-2026-10-05) is what is published in the Firebase
+// console today. THIS file adds the school-class model and is NOT published
+// until the owner has run `npm test` in tools/rules-tests and pasted it into
+// Firebase console -> Firestore Database -> Rules -> Publish. Save the
+// currently published text first (the console also keeps a rules history).
 //
 // ---------------------------------------------------------------------------
-// WHAT THIS CHANGES, AND WHY
+// TWO ACCESS MODELS, ONE DATABASE
 // ---------------------------------------------------------------------------
-// The app's access model is "anyone who knows the code is in" — a deliberate,
-// documented tradeoff (see docs/HANDOFF.md). These rules do NOT change that.
-// What they add is one thing the current posture is believed to be missing:
-// the difference between `get` (fetch ONE document whose id you already know)
-// and `list` (query a whole collection and read every document in it).
+// 1. FAMILIES (unchanged): "anyone who knows the household code is in" — the
+//    documented, deliberate trade-off. `households/*`, family `students/*`
+//    and legacy `catalogs/*` evaluate exactly as before. `list` is denied on
+//    every top-level collection so nobody can enumerate codes.
 //
-// The app only ever does `get` at the top level — it looks up a household or
-// catalog by a code a human typed. It never lists `households` or `catalogs`.
-// So denying `list` there costs the family nothing, but removes the ability
-// for any anonymous client to dump every household code, every catalogCode,
-// and every shopConfig in the project with a single query. That is the gap
-// worth closing: without it, the ~1-billion-code keyspace protecting the
-// family is irrelevant, because nobody has to guess anything.
+// 2. SCHOOL CLASSES (new): access is granted per DEVICE, not per code. Firebase
+//    anonymous auth gives every browser its own stable request.auth.uid, so
+//    rules can tell one device from another. A device proves what it may do by
+//    presenting a secret once; the secret's SHA-256 hash is the id of a lookup
+//    document, so the database never stores a usable card or key.
+//      - staff device   (teacher): has classes/{cid}/staff/{uid}; sees the whole class
+//      - class device   (shared classroom tablet): classes/{cid}/kiosks/{uid};
+//                       can read the class word list and report a device-level
+//                       activity count; can NOT read any student
+//      - child device   (a child's card): students/{sid}/devices/{uid} kind 'child';
+//                       reads/writes only that child's practice
+//      - parent device  (the parent code): same binding with kind 'parent';
+//                       READ-ONLY, enforced here
 //
-// Sub-collections keep `list`, because the app genuinely needs it (reading all
-// profiles in a household, all weeks in a catalog) — and reaching them already
-// requires knowing the parent code.
+// Honest limits: whoever holds a child's card can act as that child; a leaked
+// teacher key is full class access until rotated; a child can still inflate
+// their own stars. Nothing here can recall data already cached on a device.
 //
-// Anonymous auth stays required. It is not a real identity, just a cheap gate
-// that keeps unauthenticated scanners out and lets App Check (recommended
-// separately) do the heavier lifting against scripted abuse.
-//
-// Still NOT enforceable at the rules layer, by design of the auth model:
-//   - Parent vs. kid. Everyone in a household shares one anonymous session, so
-//     the parent PIN and the Manage Avatars gate can only ever be client-side
-//     conventions. Making them real needs per-person auth (Blaze-plan Cloud
-//     Functions or real accounts), which is out of scope for a family app.
-//   - Preventing a code-holder from corrupting data they legitimately reach.
-//     Mitigated in the client instead: sanitizeWeek() in app.js treats all
-//     shared catalog content as untrusted, and sanitizePrice() stops a tampered
-//     shopConfig from minting stars.
+// Access-call budget (Firestore: 10 per request, 20 per batch): the heaviest
+// single write here uses 2 get()/exists() calls; class creation (a 5-document
+// batch) uses well under 20.
 
 rules_version = '2';
 service cloud.firestore {
@@ -49,34 +43,64 @@ service cloud.firestore {
 
     function signedIn() { return request.auth != null; }
 
+    // ---- helpers for the school model -------------------------------------
+    function docPath(p) { return /databases/$(database)/documents/$(p); }
+    function okHash(h) { return h is string && h.matches('^[0-9a-f]{64}$'); }
+    function okId(i) { return i is string && i.matches('^[A-Za-z0-9_-]{8,64}$'); }
+    function okClass(c) { return c is string && c.matches('^[a-z0-9]{20}$'); }
+
+    function isStaff(cid) {
+      return signedIn() && okClass(cid) && exists(/databases/$(database)/documents/classes/$(cid)/staff/$(request.auth.uid));
+    }
+    function isKiosk(cid) {
+      return signedIn() && okClass(cid) && exists(/databases/$(database)/documents/classes/$(cid)/kiosks/$(request.auth.uid));
+    }
+    // Any binding (child or parent) for student `sid`.
+    function isBound(sid) {
+      return signedIn() && okId(sid) && exists(/databases/$(database)/documents/students/$(sid)/devices/$(request.auth.uid));
+    }
+    // Only a child-kind binding may write practice (parents are read-only).
+    function isBoundChild(sid) {
+      return signedIn() && okId(sid)
+        && get(/databases/$(database)/documents/students/$(sid)/devices/$(request.auth.uid)).data.kind == 'child';
+    }
+    function classOf(sid) {
+      return get(/databases/$(database)/documents/students/$(sid)).data.get('classId', null);
+    }
+    function cls(d) { return d.get('classId', null); }
+
+    // Bootstrap: the batch that creates a class may also create its first
+    // staff document and keys, because the class document it is creating
+    // carries createdBy == the caller.
+    function newClassBy(cid) {
+      return okClass(cid)
+        && !exists(/databases/$(database)/documents/classes/$(cid))
+        && getAfter(/databases/$(database)/documents/classes/$(cid)).data.createdBy == request.auth.uid;
+    }
+
+    function rewardKeys() {
+      return ['avatar','stars','currentStreak','bestStreak','lastActiveDate',
+        'recentTests','unlocks','unlockDates','equippedAvatar','equippedTheme',
+        'lifetimeStars','weekTrophies','streakShields'];
+    }
+
+    // ======================================================================
+    // FAMILIES — unchanged behaviour
+    // ======================================================================
     match /households/{code} {
       // Fetch one household by a code someone typed: allowed.
       allow get: if signedIn();
-      // Enumerate every household in the project: never. Nothing in the app
-      // does this, and it would otherwise hand over every code at once.
+      // Enumerate every household in the project: never.
       allow list: if false;
 
       allow create: if signedIn();
       allow update: if signedIn();
-      // Deletion is already blocked today and the app has no delete path.
-      // Keeping it off means a hostile write cannot destroy a household
-      // outright (it can still overwrite fields — see HANDOFF's blast-radius
-      // note; that is an accepted limit of this auth model).
       allow delete: if false;
 
       match /profiles/{profileId} {
-        // Listing profiles requires already knowing the household code.
         allow get, list: if signedIn();
         allow create, update: if signedIn();
-        // Delete is allowed here and NOWHERE else in these rules, for exactly
-        // one client feature: a parent removing their own parent profile
-        // (Parent Dashboard → "Your parent profile" → Delete). A parent doc is
-        // a name + a PIN and owns no subcollections, so deleting it destroys no
-        // practice data. This does open the same blast radius the rest of this
-        // model already accepts — a code-holder can delete any profile doc in
-        // their household. The progress/ and activity/ subcollections below
-        // deliberately keep `allow delete: if false`, so even a hostile delete
-        // of a student's enrollment doc cannot take their history with it.
+        // A parent removing their own parent profile (no subcollections).
         allow delete: if signedIn();
 
         match /progress/{weekId} {
@@ -91,46 +115,168 @@ service cloud.firestore {
       }
     }
 
-    // Phase A student/class split (docs/phase-a-student-model-plan.md,
-    // 2026-08-27): a student's durable identity (stars, unlocks, streak,
-    // etc.) now lives here, top-level, keyed by the same id as its
-    // enrollment doc under households/{code}/profiles/{id}. The app only
-    // ever reaches a student doc by an id it already has (its own profile's
-    // id, or one being migrated) via .doc(id).get()/.set() — it never queries
-    // this collection — so this gets the SAME get-vs-list split as
-    // households/catalogs above, for the identical reason: allowing `list`
-    // here would let any signed-in anonymous client dump every student's
-    // name and stats across every household in the project in one query,
-    // the exact enumeration risk the households block exists to close.
+    // ======================================================================
+    // STUDENTS — global identity. Family students (no classId) behave as
+    // before; class students (classId set) are locked to devices.
+    // ======================================================================
     match /students/{studentId} {
-      allow get: if signedIn();
+      allow get: if signedIn() && (
+           resource == null
+        || cls(resource.data) == null
+        || isBound(studentId)
+        || isStaff(cls(resource.data)));
       allow list: if false;
-      allow create, update: if signedIn();
-      allow delete: if false;
+
+      allow create: if signedIn() && (
+           cls(request.resource.data) == null
+        || isStaff(cls(request.resource.data)));
+
+      allow update: if signedIn() && (
+           // family: exactly as today, and a family record can never be
+           // captured into a class by adding classId
+           (cls(resource.data) == null && cls(request.resource.data) == null)
+           // a child's own device: reward fields only
+        || (cls(resource.data) != null && isBoundChild(studentId)
+            && cls(request.resource.data) == cls(resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(rewardKeys()))
+           // the teacher: name / roster fields, never the class itself
+        || (cls(resource.data) != null && isStaff(cls(resource.data))
+            && cls(request.resource.data) == cls(resource.data)));
+
+      allow delete: if cls(resource.data) != null && isStaff(cls(resource.data));
+
+      // A device proves it holds a valid card (child or parent) once.
+      match /devices/{uid} {
+        allow create, update: if signedIn() && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['kind','h','at'])
+          && request.resource.data.kind in ['child','parent']
+          && okHash(request.resource.data.h)
+          && get(/databases/$(database)/documents/studentCodes/$(request.resource.data.h)).data.studentId == studentId
+          && get(/databases/$(database)/documents/studentCodes/$(request.resource.data.h)).data.kind == request.resource.data.kind;
+        allow get: if signedIn() && (uid == request.auth.uid || isStaff(classOf(studentId)));
+        allow list: if signedIn() && isStaff(classOf(studentId));
+        allow delete: if signedIn() && (uid == request.auth.uid || isStaff(classOf(studentId)));
+      }
+    }
+
+    // A card or parent code. The document id is SHA-256(code); the document
+    // reveals only which child it opens. get-only (no enumeration).
+    match /studentCodes/{h} {
+      allow get: if signedIn() && okHash(h);
+      allow list, update: if false;
+      allow create: if signedIn() && okHash(h)
+        && request.resource.data.keys().hasOnly(['studentId','classId','kind','at'])
+        && request.resource.data.kind in ['child','parent']
+        && isStaff(request.resource.data.classId);
+      allow delete: if signedIn() && isStaff(resource.data.classId);
+    }
+
+    // Teacher and class-device keys (hash-keyed, get-only).
+    match /classKeys/{h} {
+      allow get: if signedIn() && okHash(h);
+      allow list, update: if false;
+      allow create: if signedIn() && okHash(h)
+        && request.resource.data.keys().hasOnly(['classId','role','at'])
+        && request.resource.data.role in ['teacher','device']
+        && (isStaff(request.resource.data.classId) || newClassBy(request.resource.data.classId));
+      allow delete: if signedIn() && isStaff(resource.data.classId);
+    }
+
+    // ======================================================================
+    // CLASSES
+    // ======================================================================
+    match /classes/{cid} {
+      // name / school / grade / catalogCode: low sensitivity, needed to show
+      // "Join Mrs. Smith's class" before a device is bound.
+      allow get: if signedIn() && okClass(cid);
+      allow list, delete: if false;
+      allow create: if signedIn() && okClass(cid)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.keys().hasOnly(['name','school','grade','catalogCode','createdBy','createdAt','v']);
+      allow update: if isStaff(cid)
+        && request.resource.data.createdBy == resource.data.createdBy;
+
+      match /staff/{uid} {
+        allow get: if signedIn() && (uid == request.auth.uid || isStaff(cid));
+        allow list: if isStaff(cid);
+        allow create: if signedIn() && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['kh','label','at'])
+          && okHash(request.resource.data.kh)
+          && (newClassBy(cid)
+              || (get(/databases/$(database)/documents/classKeys/$(request.resource.data.kh)).data.classId == cid
+                  && get(/databases/$(database)/documents/classKeys/$(request.resource.data.kh)).data.role == 'teacher'));
+        allow update: if false;
+        allow delete: if signedIn() && (isStaff(cid) || uid == request.auth.uid);
+      }
+
+      // Shared classroom devices. They can read the class (and, through the
+      // catalog rules, its word list) but nothing about any student.
+      match /kiosks/{uid} {
+        allow get: if signedIn() && (uid == request.auth.uid || isStaff(cid));
+        allow list: if isStaff(cid);
+        allow create: if signedIn() && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['kh','label','at','lastActiveDate','answers'])
+          && okHash(request.resource.data.kh)
+          && get(/databases/$(database)/documents/classKeys/$(request.resource.data.kh)).data.classId == cid
+          && get(/databases/$(database)/documents/classKeys/$(request.resource.data.kh)).data.role == 'device';
+        // device-level activity count only
+        allow update: if signedIn() && uid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveDate','answers']);
+        allow delete: if signedIn() && (isStaff(cid) || uid == request.auth.uid);
+      }
+
+      // Hashes of the current child/parent codes, so "Replace card" knows
+      // what to revoke. Staff only; never the codes themselves.
+      match /cards/{sid} {
+        allow get, list, create, update, delete: if isStaff(cid);
+      }
+
+      match /profiles/{sid} {
+        allow get: if isStaff(cid) || isBound(sid);
+        allow list: if isStaff(cid);
+        allow create, update, delete: if isStaff(cid);
+
+        match /progress/{weekId} {
+          allow get, list: if isStaff(cid) || isBound(sid);
+          allow create, update: if isBoundChild(sid) && classOf(sid) == cid;
+          allow delete: if isStaff(cid);
+        }
+        match /activity/{date} {
+          allow get, list: if isStaff(cid) || isBound(sid);
+          allow create, update: if isBoundChild(sid) && classOf(sid) == cid;
+          allow delete: if isStaff(cid);
+        }
+      }
+    }
+
+    // ======================================================================
+    // CATALOGS (word lists). Legacy catalogs behave as before; a catalog that
+    // carries a classId is writable only by that class's staff.
+    // ======================================================================
+    function catalogWritable(c) {
+      return !exists(/databases/$(database)/documents/catalogs/$(c))
+        || cls(get(/databases/$(database)/documents/catalogs/$(c)).data) == null
+        || isStaff(cls(get(/databases/$(database)/documents/catalogs/$(c)).data));
     }
 
     match /catalogs/{catalogCode} {
       allow get: if signedIn();
       allow list: if false;
 
-      allow create: if signedIn();
-      allow update: if signedIn();
+      allow create: if signedIn() && (
+           cls(request.resource.data) == null
+        || isStaff(cls(request.resource.data)));
+      allow update: if signedIn() && (
+           (cls(resource.data) == null && cls(request.resource.data) == null)
+        || (cls(resource.data) != null && isStaff(cls(resource.data))
+            && cls(request.resource.data) == cls(resource.data)));
       allow delete: if false;
 
-      // Shared word lists. Cross-household sharing is the intended feature, so
-      // any signed-in client that knows the catalog code can read and write
-      // here. The client treats everything read from this subtree as untrusted
-      // input (sanitizeWeek in app.js) precisely because of that.
-      //
-      // delete changed from false to signedIn() for the catalog editor's
-      // per-week delete (2026-09-01, see docs/HANDOFF.md) — a teacher
-      // removing a wrong or unwanted week. Same trust posture as create/
-      // update on this same subtree: anyone with the catalog code already has
-      // full read/write here, so allowing delete too closes no new gap, it
-      // just lets the client do something it already effectively could (an
-      // update that overwrites a week's words down to nothing).
+      // Shared word lists. The client treats everything read from this subtree
+      // as untrusted (sanitizeWeek in app.js).
       match /weeks/{weekId} {
-        allow get, list, create, update, delete: if signedIn();
+        allow get, list: if signedIn();
+        allow create, update, delete: if signedIn() && catalogWritable(catalogCode);
       }
     }
   }
