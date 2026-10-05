@@ -1,11 +1,12 @@
 // Recommended Firestore security rules for the Word Study app.
 //
-// ⚠️ NOT YET APPLIED. Rules live in the Firebase console, which this repo has
-// no access to — paste these into
-//   Firebase console → Firestore Database → Rules
-// for project `spelling-words-671aa`, review against whatever is live today,
-// then Publish. Nothing in the app depends on them being applied; they only
-// tighten what a stranger can do.
+// ✅ APPLIED. Published in the Firebase console (Firestore Database → Rules)
+// for project `spelling-words-671aa`; the latest version went live 2026-09-02
+// and was behaviour-tested against production on 2026-10-05 (list denied on
+// households/students/catalogs, catalog-week and profile delete allowed,
+// progress/activity/student/household delete denied, unauthenticated denied).
+// Rules live in the console, not this repo: after editing this file, paste it
+// into Firebase console → Firestore Database → Rules and Publish.
 //
 // ---------------------------------------------------------------------------
 // WHAT THIS CHANGES, AND WHY

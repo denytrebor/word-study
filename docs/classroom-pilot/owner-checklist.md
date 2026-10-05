@@ -2,12 +2,14 @@
 
 ## A. Only you can do these (consoles, accounts, policy)
 
-1. **Verify the live Firestore rules.** The repo's notes contradict each other about whether `docs/firestore.rules` is
-   live. Firebase console → Firestore Database → Rules: compare with `docs/firestore.rules`, publish the current file,
-   then test with throwaway data that (a) listing the top-level `households` collection is denied and (b) a signed-in
-   client can still read one household by code.
+1. ✅ **Firestore rules — verified 2026-10-05.** The live rules (last published Sep 2, 2026) behave exactly as
+   `docs/firestore.rules` specifies: listing `households`, `students` and `catalogs` is denied; a catalog-week delete
+   and a profile-doc delete are allowed; deleting progress, activity, student or household documents is denied;
+   unauthenticated requests are denied. Re-run this check after any rules change. (Limit: the rules still don't
+   check class membership — anyone who knows a class code has full access to that class.)
 2. **Turn on App Check** (free) so scripts can't burn the free-tier quota and take sync down.
-3. **Note the Firestore region** (console → Firestore → settings). The school will ask where the data lives.
+3. ✅ **Firestore region: `nam5` (US multi-region), Standard edition, Native mode.** Note: **no scheduled backups
+   are configured** (console → Firestore → Disaster Recovery) — decide whether the pilot needs them.
 4. **Use a random catalog code for the class — never the school's name.** The app now auto-creates a random 10-character
    list code when a teacher taps *Word Lists* in a class with none. Do **not** use your existing family catalog for the
    class. (The family catalog is named after the school and was mentioned in code comments in the public repository
