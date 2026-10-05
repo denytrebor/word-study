@@ -51,9 +51,6 @@ service cloud.firestore {
     function isStaff(cid) {
       return signedIn() && okClass(cid) && exists(/databases/$(database)/documents/classes/$(cid)/staff/$(request.auth.uid));
     }
-    function isKiosk(cid) {
-      return signedIn() && okClass(cid) && exists(/databases/$(database)/documents/classes/$(cid)/kiosks/$(request.auth.uid));
-    }
     // Any binding (child or parent) for student `sid`.
     function isBound(sid) {
       return signedIn() && okId(sid) && exists(/databases/$(database)/documents/students/$(sid)/devices/$(request.auth.uid));
