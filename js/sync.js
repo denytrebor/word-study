@@ -26,6 +26,14 @@ const Sync = (function () {
     try {
       firebase.initializeApp(window.FIREBASE_CONFIG);
       db = firebase.firestore();
+      // Local development only: ?emulator=1 on localhost talks to the Firebase
+      // emulators (see tools/rules-tests). Never active on the real sites.
+      const onLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      const useEmulator = onLocalhost && new URLSearchParams(location.search).get("emulator") === "1";
+      if (useEmulator) {
+        db.useEmulator("127.0.0.1", 8085);
+        firebase.auth().useEmulator("http://127.0.0.1:9099", { disableWarnings: true });
+      }
       db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
       ready = firebase
         .auth()
@@ -889,6 +897,49 @@ const Sync = (function () {
     }).catch(warnWriteFailed("kiosk activity"));
   }
 
+  // Teacher: mint another teacher-device key or class-device key later (the
+  // first pair is shown once at class creation; only hashes are stored).
+  async function newKey(role) {
+    const cs = getClassSession();
+    if (!cs || cs.mode !== "staff") throw new Error("Not a teacher device");
+    await authedUid();
+    const key = randomCode(16);
+    const h = await sha256hex(key);
+    await db.collection("classKeys").doc(h).set({ classId: cs.cid, role: role === "teacher" ? "teacher" : "device", at: Date.now() });
+    return key;
+  }
+
+  // "Not me": undo the binding a card scan just created on this device.
+  async function unbindStudent(sid) {
+    const uid = await authedUid();
+    await db.collection("students").doc(sid).collection("devices").doc(uid).delete().catch(() => {});
+  }
+
+  // Has this device's access been revoked (card replaced, device removed)?
+  // Returns { offline:true } when it can't tell, else { revoked:[sid...] } for
+  // child/parent bindings or { removed:true } for a teacher/class device.
+  async function checkSession() {
+    const cs = getClassSession();
+    if (!cs) return { ok: true };
+    let uid;
+    try { uid = await authedUid(); } catch (e) { return { offline: true }; }
+    try {
+      if (cs.mode === "child" || cs.mode === "parent") {
+        const revoked = [];
+        for (const sid of cs.sids || []) {
+          const snap = await db.collection("students").doc(sid).collection("devices").doc(uid).get({ source: "server" });
+          if (!snap.exists) revoked.push(sid);
+        }
+        return { revoked };
+      }
+      const sub = cs.mode === "staff" ? "staff" : "kiosks";
+      const snap = await db.collection("classes").doc(cs.cid).collection(sub).doc(uid).get({ source: "server" });
+      return snap.exists ? { ok: true } : { removed: true };
+    } catch (e) {
+      return { offline: true };
+    }
+  }
+
   async function fetchClassMeta(cid) {
     await authedUid();
     const snap = await db.collection("classes").doc(cid).get();
@@ -904,6 +955,8 @@ const Sync = (function () {
         for (const sid of cs.sids || []) await db.collection("students").doc(sid).collection("devices").doc(uid).delete().catch(() => {});
       } else if (cs && cs.mode === "kiosk") {
         await db.collection("classes").doc(cs.cid).collection("kiosks").doc(uid).delete().catch(() => {});
+      } else if (cs && cs.mode === "staff") {
+        await db.collection("classes").doc(cs.cid).collection("staff").doc(uid).delete().catch(() => {});
       }
     } catch (e) { /* offline: the local session is still cleared */ }
     setClassSession(null);
@@ -912,7 +965,7 @@ const Sync = (function () {
   return {
     getClassSession, setClassSession, classMode, isConnected,
     createClass, redeemKey, enrolStudent, replaceCard, redeemCard, rememberBoundStudent,
-    listStudentDevices, listClassDevices, removeClassDevice, reportKioskActivity, fetchClassMeta, leaveClass,
+    listStudentDevices, listClassDevices, removeClassDevice, reportKioskActivity, fetchClassMeta, leaveClass, newKey, unbindStudent, checkSession,
     randomCode, sha256hex, normalizeSecret,
     getHouseholdCode,
     createHousehold,

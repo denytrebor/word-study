@@ -1402,3 +1402,64 @@ mark.tl-fix {
   margin-left: 8px; color: var(--muted);
   font-size: 0.78rem; font-weight: 600; white-space: nowrap;
 }
+
+
+/* ---------------------------------------------------------------------
+   SCHOOL / CLASS MODE (docs/classroom-pilot, docs/firestore.rules)
+   body gets one of class-staff / class-kiosk / class-child / class-parent.
+   ------------------------------------------------------------------- */
+body.class-staff .family-only,
+body.class-kiosk .family-only,
+body.class-child .family-only,
+body.class-parent .family-only { display: none !important; }
+/* A shared classroom device has no student identity: no shop, no progress,
+   no profile switching, no star counter. */
+body.class-kiosk [data-nav="shop"],
+body.class-kiosk [data-nav="progress"],
+body.class-kiosk #btn-open-trophy-shelf,
+body.class-kiosk #header-stars,
+body.class-kiosk #btn-switch-profile { display: none !important; }
+
+.school-scan-wrap { margin: 12px auto; max-width: 340px; text-align: center; }
+.school-scan-wrap video { width: 100%; border-radius: 16px; background: #000; }
+.card-confirm-avatar { text-align: center; margin: 18px 0 4px; }
+.card-confirm-avatar .avatar-img { height: 120px; }
+.card-confirm-avatar .avatar { font-size: 5rem; }
+.class-tools { margin-bottom: 16px; }
+.class-tools-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.class-tools-actions .btn { width: auto; }
+.print-sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+.print-card { border: 2px dashed #94a3b8; border-radius: 14px; padding: 12px; background: #fff; text-align: center; break-inside: avoid; }
+.print-card h3 { margin: 0 0 2px; font-size: 1.05rem; }
+.print-card .print-sub { font-size: .75rem; color: #475569; margin: 0 0 6px; }
+.print-card .print-qr { display: flex; justify-content: center; margin: 6px 0; }
+.print-card .print-code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 1.2rem; font-weight: 800; letter-spacing: .08em; margin: 4px 0; }
+.print-card .print-warn { font-size: .7rem; color: #64748b; margin: 4px 0 0; }
+.print-card.print-parent { border-color: #fb923c; }
+.card-replace-btn { margin-top: 6px; font-size: .8rem; }
+
+@media print {
+  body * { visibility: hidden; }
+  #screen-key-sheet, #screen-key-sheet *, #screen-cards-print, #screen-cards-print * { visibility: visible; }
+  #screen-key-sheet, #screen-cards-print { position: absolute; left: 0; top: 0; width: 100%; background: #fff; }
+  .no-print { display: none !important; }
+  .print-sheet { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .print-card { border-color: #333; }
+  #app-header, .toast { display: none !important; }
+}
+
+.staff-only { display: none; }
+body.class-staff .staff-only { display: inline-block; }
+/* School modes: only a teacher device has teacher tools; a parent view is read-only. */
+body.class-parent #parent-dash-words,
+body.class-parent #parent-dash-add-students,
+body.class-parent #parent-dash-class-info,
+body.class-parent #parent-dash-manage-avatars,
+body.class-parent #parent-dash-school-overview,
+body.class-parent #parent-dash-exit,
+body.class-staff #parent-dash-school-overview,
+body.class-staff #parent-dash-exit,
+body.class-staff .parent-self-manage,
+body.class-parent .parent-self-manage { display: none !important; }
+
+body.class-parent .psc-edit-toggle { display: none !important; }

@@ -1,4 +1,4 @@
-const CACHE_NAME = "word-study-v32";
+const CACHE_NAME = "word-study-v33";
 // Character avatars are precached so an equipped character still shows up
 // offline, active-in-shop or not (a kid's already-equipped avatar must keep
 // rendering even after a parent deactivates it in Manage Avatars). addAll()
@@ -46,6 +46,7 @@ const ASSETS = [
   // still caches any book that does get fetched, so it works offline after.
   "./js/kjv.js",
   "./js/vendor/qrcode.js",
+  "./js/vendor/jsQR.js",
   "./js/firebase-config.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",

@@ -26,13 +26,18 @@
   function setActiveProfileId(id) { localStorage.setItem(ACTIVE_KEY, id); }
 
   function firestoreReady() {
-    return typeof Sync !== "undefined" && !!Sync.getHouseholdCode();
+    if (typeof Sync === "undefined" || !Sync.isConnected()) return false;
+    // A shared classroom device has no student identity to sync: it practises
+    // locally and only reads the class word list (see ensureCatalogLoaded).
+    return Sync.classMode() !== "kiosk";
   }
 
   // The catalog code this household is using — a fully offline/local-only
   // device (no household connected) gets one implicit private catalog with
   // no code to manage at all.
   function getCatalogCode() {
+    const ksess = typeof Sync !== "undefined" && Sync.getClassSession ? Sync.getClassSession() : null;
+    if (ksess && ksess.mode === "kiosk") return ksess.catalogCode || LOCAL_CATALOG;
     if (firestoreReady() && typeof Sync !== "undefined") return Sync.getCatalogCode();
     return LOCAL_CATALOG;
   }
@@ -302,7 +307,8 @@
     const section = document.getElementById("screen-" + id);
     section.classList.add("active");
     const header = document.getElementById("app-header");
-    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal" || id === "class-roster" || id === "class-info" || id === "school-overview" || (id === "catalog-editor" && !!state.parentProfile));
+    header.classList.toggle("hidden", id === "profiles" || id === "household" || id === "parent-dashboard" || id === "manage-avatars" || id === "legal" || id === "class-roster" || id === "class-info" || id === "school-overview" || (id === "catalog-editor" && !!state.parentProfile)
+      || id === "school-entry" || id === "school-code" || id === "card-confirm" || id === "class-setup" || id === "key-sheet" || id === "cards-print");
     endRetype();
     clearBuddy();
     window.scrollTo(0, 0);
@@ -971,6 +977,21 @@
     if (!state.activity || !state.profile) return;
     save(activityKey(state.profile.id, state.activity.date), state.activity);
     if (firestoreReady()) trackSyncWrite(Sync.pushActivity(state.profile.id, state.activity.date, state.activity));
+    else if (typeof Sync !== "undefined" && Sync.classMode && Sync.classMode() === "kiosk") reportKioskDelta();
+  }
+
+  // A shared class device doesn't know WHICH child practised, only how much it
+  // was used. Send the growth in today's local answer count since last report.
+  let kioskReported = { date: "", answers: 0 };
+  function reportKioskDelta() {
+    const a = state.activity;
+    if (!a) return;
+    if (kioskReported.date !== a.date) kioskReported = { date: a.date, answers: 0 };
+    const delta = (a.answers || 0) - kioskReported.answers;
+    if (delta > 0) {
+      kioskReported.answers = a.answers || 0;
+      Sync.reportKioskActivity(delta);
+    }
   }
 
   function recordModeStart(mode) {
@@ -1476,6 +1497,9 @@
     Sync.watchProfiles((remoteList) => {
       saveProfiles(remoteList);
       renderProfiles();
+      // A teacher device opens straight onto the dashboard, which may have
+      // rendered before the first roster snapshot arrived.
+      if (state.parentProfile && (document.querySelector(".screen.active") || {}).id === "screen-parent-dashboard") loadParentDashboard();
     });
   }
 
@@ -1627,7 +1651,8 @@
 
   function openClassRoster(returnTo) {
     rosterReturnTo = returnTo === "dashboard" ? "dashboard" : "profiles";
-    document.getElementById("roster-default-grade").value = "";
+    // In a class, children default to the class's own grade.
+    document.getElementById("roster-default-grade").value = (classModeNow() === "staff" && (classSession() || {}).grade) || "";
     document.getElementById("roster-paste-input").value = "";
     document.getElementById("roster-preview").classList.add("hidden");
     document.getElementById("btn-save-roster").classList.add("hidden");
@@ -1658,6 +1683,7 @@
   // sequence — one renderProfiles() + one toast at the end, then back to the
   // profile grid so the teacher can see the class was created.
   document.getElementById("btn-save-roster").addEventListener("click", () => {
+    if (classModeNow() === "staff") { enrolRosterIntoClass(); return; }
     const btn = document.getElementById("btn-save-roster");
     btn.disabled = true;
     const count = rosterParsePreview.length;
@@ -1800,6 +1826,7 @@
     document.getElementById("shared-device-toggle").checked = isSharedDevice();
     document.getElementById("parent-dash-class-info").classList.toggle("hidden", !firestoreReady());
     renderParentSelfManage();
+    renderClassTools();
     showScreen("parent-dashboard");
     loadParentDashboard();
   }
@@ -1863,7 +1890,7 @@
   const PARENT_NAME_MAX = 60;
 
   function renderParentSelfManage() {
-    if (!state.parentProfile) return;
+    if (!state.parentProfile || classSession()) return;
     document.getElementById("parent-self-name").value = state.parentProfile.name || "";
     document.getElementById("parent-self-delete-confirm").classList.add("hidden");
   }
@@ -2077,6 +2104,7 @@
           <div class="psc-edit-actions">
             <button class="btn btn-secondary" data-edit-save="${student.id}">Save</button>
             <button class="btn btn-ghost" data-edit-cancel="${student.id}">Cancel</button>
+            <button class="btn btn-ghost card-replace-btn staff-only" data-card-replace="${student.id}">🪪 Issue a new card</button>
           </div>
         </div>
 
@@ -2105,6 +2133,7 @@
   // per-student needs-work lists. "Shaky" only (wordStatus), not
   // never-attempted — this card is about difficulty, not who hasn't started.
   function renderHardestWordsCard(results) {
+    if (classModeNow() === "parent") return ""; // a one-child view: the class summary would be confusing
     const counts = new Map();
     results.forEach(({ progress }) => {
       if (!progress || !Array.isArray(progress.words)) return;
@@ -2478,6 +2507,18 @@
   // and the parent dashboard, which needs word lists but must never touch
   // per-profile week selection.
   async function ensureCatalogLoaded() {
+    const ksess = typeof Sync !== "undefined" && Sync.getClassSession ? Sync.getClassSession() : null;
+    if (ksess && ksess.mode === "kiosk") {
+      // Shared classroom device: the class word list is read-only here.
+      const kcode = ksess.catalogCode || null;
+      if (!kcode) { state.catalogWeeks = []; return null; }
+      state.catalogWeeks = sanitizeWeeks(load(catalogWeeksKey(kcode), []));
+      try {
+        const remote = sanitizeWeeks(await Sync.fetchCatalogWeeks(kcode));
+        if (remote.length) { state.catalogWeeks = remote; save(catalogWeeksKey(kcode), remote); }
+      } catch (e) { /* fall back to the cached list */ }
+      return kcode;
+    }
     let code;
     if (!firestoreReady()) {
       code = LOCAL_CATALOG;
@@ -5924,6 +5965,8 @@
   const SYNC_SKIP_KEY = "ws_sync_skipped";
 
   function enterApp() {
+    const cs = classSession();
+    if (cs) { enterClassApp(cs); return; }
     const profiles = getProfiles();
     renderProfiles();
     const activeId = getActiveProfileId();
@@ -6078,6 +6121,519 @@
   })();
 
   /* ---------------------------------------------------------------------
+   * SCHOOL CLASSES
+   * Teacher devices, shared classroom devices, child cards and the parent
+   * view. What each kind of device may read/write is enforced by
+   * docs/firestore.rules (tested in tools/rules-tests); this section is the UI
+   * and local session handling on top of Sync's school functions.
+   *   staff  — teacher: dashboard, word lists, roster, cards
+   *   kiosk  — shared classroom device: the class word list only, no students
+   *   child  — a child's own device(s), bound by their card
+   *   parent — read-only view bound by the parent code
+   * ------------------------------------------------------------------- */
+  const SCHOOL_ORIGIN = "https://wordstudy.trebor.me";
+  const PENDING_CARDS_KEY = "ws_pending_cards";
+  const REWARD_FIELDS = ["avatar", "stars", "currentStreak", "bestStreak", "lastActiveDate", "recentTests", "unlocks",
+    "unlockDates", "equippedAvatar", "equippedTheme", "lifetimeStars", "weekTrophies", "streakShields"];
+
+  function classSession() {
+    return typeof Sync !== "undefined" && Sync.getClassSession ? Sync.getClassSession() : null;
+  }
+  function classModeNow() {
+    const s = classSession();
+    return s ? s.mode : null;
+  }
+  function applyClassModeUI() {
+    const m = classModeNow();
+    ["staff", "kiosk", "child", "parent"].forEach((x) => document.body.classList.toggle("class-" + x, m === x));
+  }
+  // "KX7PM-R4TQ9" for a 10-char card, "ABCD-EFGH-JKLM-NPQR" for a 16-char key.
+  function groupCode(code) {
+    const c = String(code || "");
+    return c.length === 10 ? c.slice(0, 5) + "-" + c.slice(5) : c.replace(/(.{4})(?=.)/g, "$1-");
+  }
+  // Cards and keys always point at the canonical address: separate origins keep
+  // separate browser storage, so a card must open the same place every time.
+  function schoolLink(kind, code) { return `${SCHOOL_ORIGIN}/#${kind}=${code}`; }
+  function qrInto(el, text, size) {
+    el.innerHTML = "";
+    if (typeof QRCode === "undefined") { el.textContent = text; return; }
+    try { new QRCode(el, { text, width: size || 150, height: size || 150, correctLevel: QRCode.CorrectLevel.M }); }
+    catch (e) { el.textContent = text; }
+  }
+  function defaultDeviceLabel() {
+    const ua = navigator.userAgent || "";
+    if (/iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) return "iPad";
+    if (/CrOS/i.test(ua)) return "Chromebook";
+    if (/Android/i.test(ua)) return "Android tablet";
+    if (/iPhone/i.test(ua)) return "iPhone";
+    return "Computer";
+  }
+
+  // A device is a family device OR a school device. Mixing them would let a
+  // class sign-in replace a family's local profiles, so refuse up front.
+  function schoolBlockReason() {
+    if (typeof Sync === "undefined") return "School sign-in needs an internet connection and isn't available right now.";
+    if (Sync.getHouseholdCode()) return "This device is already connected to a family. Use a different device or browser for school.";
+    if (!classSession() && getProfiles().length) return "This device already has other profiles on it. Use a different device or browser for school.";
+    return "";
+  }
+
+  function setSchoolStatus(msg) { document.getElementById("school-code-status").textContent = msg || ""; }
+
+  function openSchoolCodeScreen(kind) {
+    const copy = {
+      card: ["🎒 Your card", "Scan the QR code on your card, or type the code under it."],
+      device: ["📱 Class device key", "Scan or type the class-device key from the teacher's setup sheet."],
+      teacher: ["👩‍🏫 Teacher key", "Scan or type the teacher key from the setup sheet."],
+    }[kind] || ["Your card", ""];
+    document.getElementById("school-code-title").textContent = copy[0];
+    document.getElementById("school-code-hint").textContent = copy[1];
+    document.getElementById("school-code-input").value = "";
+    setSchoolStatus("");
+    showScreen("school-code");
+  }
+
+  document.getElementById("btn-open-school").addEventListener("click", () => showScreen("school-entry"));
+  document.getElementById("school-entry-back").addEventListener("click", () => showScreen("household"));
+  document.getElementById("btn-school-have-card").addEventListener("click", () => openSchoolCodeScreen("card"));
+  document.getElementById("btn-school-class-device").addEventListener("click", () => openSchoolCodeScreen("device"));
+  document.getElementById("btn-school-teacher").addEventListener("click", () => { document.getElementById("class-setup-status").textContent = ""; showScreen("class-setup"); });
+  document.getElementById("school-code-back").addEventListener("click", () => { stopSchoolScan(); showScreen("school-entry"); });
+  document.getElementById("class-setup-back").addEventListener("click", () => showScreen("school-entry"));
+  document.getElementById("btn-class-join-teacher").addEventListener("click", () => openSchoolCodeScreen("teacher"));
+
+  let schoolBusy = false;
+  async function submitSchoolCode(raw) {
+    if (schoolBusy) return;
+    const block = schoolBlockReason();
+    if (block) { setSchoolStatus(block); return; }
+    const norm = Sync.normalizeSecret(raw);
+    if (norm.length !== 10 && norm.length !== 16) {
+      setSchoolStatus("That doesn't look like a card or key. Cards have 10 characters (like KX7PM-R4TQ9); keys have 16.");
+      return;
+    }
+    schoolBusy = true;
+    setSchoolStatus("Checking…");
+    try {
+      if (norm.length === 16) {
+        const s = await Sync.redeemKey(norm, defaultDeviceLabel());
+        if (!s) { setSchoolStatus("That key isn't recognised. Check it and try again."); return; }
+        applyClassModeUI();
+        toast(s.mode === "staff" ? `Teacher device ready — ${s.name}` : `Class device ready — ${s.name}`);
+        enterApp();
+        return;
+      }
+      const r = await Sync.redeemCard(norm);
+      if (!r) { setSchoolStatus("That card isn't recognised — it may have been replaced. Ask your teacher for a new one."); return; }
+      showCardConfirm(r);
+    } catch (e) {
+      setSchoolStatus("Can't reach the school right now. Try again when you're on Wi-Fi.");
+    } finally {
+      schoolBusy = false;
+    }
+  }
+  document.getElementById("btn-school-code-go").addEventListener("click", () => submitSchoolCode(document.getElementById("school-code-input").value));
+  document.getElementById("school-code-input").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("btn-school-code-go").click(); });
+
+  /* ---- card confirmation: the child sees their name + class, then says yes ---- */
+  let pendingCard = null;
+  function showCardConfirm(r) {
+    pendingCard = r;
+    const s = r.student || {};
+    const isParent = r.kind === "parent";
+    document.getElementById("card-confirm-avatar").innerHTML = `<span class="avatar">${avatarHtml({ avatar: s.avatar || "🙂", equippedAvatar: s.equippedAvatar })}</span>`;
+    document.getElementById("card-confirm-hello").textContent = isParent ? `Family view for ${s.name || "your child"}` : `Hi ${s.name || "there"}!`;
+    const c = r.cls || {};
+    document.getElementById("card-confirm-class").textContent = [c.name, c.school].filter(Boolean).join(" · ");
+    document.getElementById("btn-card-confirm-yes").textContent = isParent ? "Yes, show me" : "That's me!";
+    document.getElementById("btn-card-confirm-no").textContent = isParent ? "Not my child" : "Not me";
+    showScreen("card-confirm");
+  }
+
+  function adoptBoundStudent(r) {
+    const s = r.student || {};
+    const p = { id: r.sid, name: s.name || "Student", grade: r.grade || "", role: "", classId: r.cid };
+    REWARD_FIELDS.forEach((k) => { if (s[k] !== undefined) p[k] = s[k]; });
+    if (typeof p.stars !== "number") p.stars = 0;
+    const list = getProfiles().filter((x) => x.id !== r.sid);
+    list.push(p);
+    saveProfiles(list);
+  }
+
+  document.getElementById("btn-card-confirm-yes").addEventListener("click", () => {
+    const r = pendingCard;
+    if (!r) return;
+    try { Sync.rememberBoundStudent(r); }
+    catch (e) { toast("This device is already set up differently."); return; }
+    adoptBoundStudent(r);
+    pendingCard = null;
+    applyClassModeUI();
+    if (r.kind !== "parent") setActiveProfileId(r.sid);
+    enterApp();
+  });
+  document.getElementById("btn-card-confirm-no").addEventListener("click", async () => {
+    const r = pendingCard;
+    pendingCard = null;
+    if (r) await Sync.unbindStudent(r.sid); // undo the binding the scan created
+    openSchoolCodeScreen("card");
+  });
+
+  /* ---- entering the app as each kind of school device ---- */
+  function ensureKioskProfile(cs) {
+    const list = getProfiles().filter((p) => p.id !== "kiosk-device");
+    list.push({ id: "kiosk-device", name: cs.label || "Class device", avatar: "📚", grade: cs.grade || "", role: "", stars: 0, lifetimeStars: 0 });
+    saveProfiles(list);
+    setActiveProfileId("kiosk-device");
+  }
+
+  // After a card is replaced or a device is removed, the device keeps its local
+  // copy but can no longer sync. Tell the person instead of failing silently.
+  async function verifyClassAccess() {
+    const r = await Sync.checkSession();
+    if (!r || r.ok || r.offline) return;
+    const cs = classSession();
+    if (!cs) return;
+    if (r.removed) {
+      await Sync.leaveClass();
+      saveProfiles([]);
+      localStorage.removeItem(ACTIVE_KEY);
+      state.profile = null; state.parentProfile = null;
+      applyClassModeUI();
+      openSchoolCodeScreen(cs.mode === "kiosk" ? "device" : "teacher");
+      setSchoolStatus("This device was removed from the class. Scan a key to set it up again.");
+      return;
+    }
+    if (r.revoked && r.revoked.length) {
+      const left = (cs.sids || []).filter((s) => !r.revoked.includes(s));
+      saveProfiles(getProfiles().filter((p) => !r.revoked.includes(p.id)));
+      if (!left.length) {
+        Sync.setClassSession(null);
+        localStorage.removeItem(ACTIVE_KEY);
+        state.profile = null; state.parentProfile = null;
+        applyClassModeUI();
+      } else {
+        Sync.setClassSession(Object.assign({}, cs, { sids: left }));
+      }
+      openSchoolCodeScreen("card");
+      setSchoolStatus("Your card was replaced. Ask your teacher for your new card, then scan it.");
+    }
+  }
+
+  function enterClassApp(cs) {
+    applyClassModeUI();
+    verifyClassAccess();
+    if (cs.mode === "staff") {
+      state.parentProfile = { id: "staff-" + cs.cid, name: cs.label || "Teacher", role: "parent" };
+      watchProfilesList();
+      openParentDashboard();
+      return;
+    }
+    if (cs.mode === "kiosk") {
+      ensureKioskProfile(cs);
+      selectProfile("kiosk-device");
+      return;
+    }
+    if (cs.mode === "parent") {
+      state.parentProfile = { id: "parent-view", name: "Family view", role: "parent" };
+      openParentDashboard();
+      return;
+    }
+    // child device: one bound child goes straight in; siblings get a small picker
+    const kids = getProfiles().filter((p) => (cs.sids || []).includes(p.id));
+    if (kids.length === 1) selectProfile(kids[0].id);
+    else { renderProfiles(); showScreen("profiles"); }
+  }
+
+  /* ---- create a class (teacher / owner) ---- */
+  function showKeySheet(items, then) {
+    const wrap = document.getElementById("key-sheet-items");
+    wrap.innerHTML = "";
+    items.forEach((it) => {
+      const card = document.createElement("div");
+      card.className = "print-card";
+      card.innerHTML = `<h3>${escapeAttr(it.title)}</h3><p class="print-sub">${escapeAttr(it.sub || "")}</p><div class="print-qr"></div>` +
+        `<div class="print-code">${escapeAttr(groupCode(it.key))}</div><p class="print-warn">${escapeAttr(it.warn || "Keep this private.")}</p>`;
+      qrInto(card.querySelector(".print-qr"), schoolLink(it.kind, it.key), 160);
+      wrap.appendChild(card);
+    });
+    keySheetThen = then || null;
+    showScreen("key-sheet");
+  }
+  let keySheetThen = null;
+  document.getElementById("btn-key-sheet-print").addEventListener("click", () => window.print());
+  document.getElementById("btn-key-sheet-done").addEventListener("click", () => {
+    const then = keySheetThen;
+    keySheetThen = null;
+    if (then) then(); else enterApp();
+  });
+
+  document.getElementById("btn-class-create").addEventListener("click", async () => {
+    const status = document.getElementById("class-setup-status");
+    const block = schoolBlockReason();
+    if (block) { status.textContent = block; return; }
+    const name = document.getElementById("class-setup-name").value.trim();
+    const school = document.getElementById("class-setup-school").value.trim();
+    const grade = normalizeGradeInput(document.getElementById("class-setup-grade").value);
+    if (!name || !school || !grade) { status.textContent = "Please fill in the class name, school and grade."; return; }
+    const btn = document.getElementById("btn-class-create");
+    btn.disabled = true;
+    status.textContent = "Creating your class…";
+    try {
+      const made = await Sync.createClass({ name: name.slice(0, 80), school: school.slice(0, 80), grade, label: defaultDeviceLabel() + " (teacher)" });
+      applyClassModeUI();
+      status.textContent = "";
+      showKeySheet([
+        { title: "Teacher key", sub: `${name} · ${school}`, key: made.teacherKey, kind: "t", warn: "For other TEACHER devices. Keep private." },
+        { title: "Class device key", sub: `${name} · ${school}`, key: made.deviceKey, kind: "d", warn: "For ONE shared classroom tablet or Chromebook each." },
+      ], () => enterApp());
+    } catch (e) {
+      status.textContent = "Couldn't create the class — check your internet and try again.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /* ---- student cards (printed once; the database keeps only hashes) ---- */
+  let cardsThen = null;
+  function getPendingCards() { return load(PENDING_CARDS_KEY, []); }
+  function addPendingCards(cards) {
+    const keep = getPendingCards().filter((p) => !cards.some((c) => c.sid && c.sid === p.sid));
+    save(PENDING_CARDS_KEY, keep.concat(cards));
+  }
+  function showCardSheet(cards, then) {
+    const cs = classSession() || {};
+    const wrap = document.getElementById("cards-print-items");
+    wrap.innerHTML = "";
+    const sub = [cs.name, cs.school].filter(Boolean).join(" · ");
+    cards.forEach((c) => {
+      const kid = document.createElement("div");
+      kid.className = "print-card";
+      kid.innerHTML = `<h3>${escapeAttr(c.name)}</h3><p class="print-sub">${escapeAttr(sub)}${c.grade ? " · Grade " + escapeAttr(c.grade) : ""}</p><div class="print-qr"></div>` +
+        `<div class="print-code">${escapeAttr(groupCode(c.childCode))}</div><p class="print-warn">Student card — keep it safe. Anyone with it can open ${escapeAttr(c.name)}'s practice.</p>`;
+      qrInto(kid.querySelector(".print-qr"), schoolLink("s", c.childCode), 150);
+      wrap.appendChild(kid);
+      const par = document.createElement("div");
+      par.className = "print-card print-parent";
+      par.innerHTML = `<h3>${escapeAttr(c.name)} — parent code</h3><p class="print-sub">For home: a read-only view of your child's practice.</p><div class="print-qr"></div>` +
+        `<div class="print-code">${escapeAttr(groupCode(c.parentCode))}</div><p class="print-warn">Keep private. Lost? Ask the teacher for a new one.</p>`;
+      qrInto(par.querySelector(".print-qr"), schoolLink("s", c.parentCode), 150);
+      wrap.appendChild(par);
+    });
+    cardsThen = then || null;
+    showScreen("cards-print");
+  }
+  document.getElementById("btn-cards-print").addEventListener("click", () => window.print());
+  document.getElementById("btn-cards-done").addEventListener("click", () => {
+    localStorage.removeItem(PENDING_CARDS_KEY); // the codes are gone for good once printed
+    const then = cardsThen;
+    cardsThen = null;
+    if (then) then(); else openParentDashboard();
+  });
+
+  // Teacher roster import in a class: one batch per child, then the card sheet.
+  async function enrolRosterIntoClass() {
+    const rows = rosterParsePreview.slice();
+    const btn = document.getElementById("btn-save-roster");
+    btn.disabled = true;
+    const existing = getProfiles().filter((p) => p.role !== "parent").length;
+    const cards = [];
+    try {
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        toast(`Adding ${i + 1} of ${rows.length}…`);
+        const made = await Sync.enrolStudent({ name: r.name, grade: r.grade || (classSession() || {}).grade || "", avatar: AVATARS[(existing + i) % AVATARS.length] });
+        cards.push({ sid: made.sid, name: made.name, grade: made.grade, childCode: made.childCode, parentCode: made.parentCode });
+        addPendingCards([cards[cards.length - 1]]);
+      }
+      rosterParsePreview = [];
+      toast(`Added ${cards.length} student${cards.length === 1 ? "" : "s"}!`);
+      showCardSheet(cards, () => leaveClassRoster());
+    } catch (e) {
+      toast(cards.length ? `Added ${cards.length}, then stopped — check your internet. Your new cards are in "Print new cards".` : "Couldn't add students — check your internet and try again.");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // "Issue a new card": the old card and every device using it stop working.
+  document.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-card-replace]");
+    if (!b) return;
+    if (b.dataset.armed !== "1") {
+      b.dataset.armed = "1";
+      b.textContent = "Tap again to replace the card";
+      setTimeout(() => { b.dataset.armed = "0"; b.textContent = "🪪 Issue a new card"; }, 5000);
+      return;
+    }
+    const sid = b.getAttribute("data-card-replace");
+    b.disabled = true;
+    try {
+      const fresh = await Sync.replaceCard(sid);
+      const stu = getProfiles().find((p) => p.id === sid) || {};
+      const cards = [{ sid, name: stu.name || "Student", grade: stu.grade || "", childCode: fresh.childCode, parentCode: fresh.parentCode }];
+      addPendingCards(cards);
+      toast(`New card issued — ${fresh.revokedDevices} device${fresh.revokedDevices === 1 ? "" : "s"} signed out.`);
+      showCardSheet(cards, () => openParentDashboard());
+    } catch (err) {
+      toast("Couldn't issue a new card — check your internet and try again.");
+      b.disabled = false;
+    }
+  });
+
+  /* ---- teacher dashboard: class tools ---- */
+  function relativeSchoolDate(d) { return d ? relativeDateLabel(d) : "never"; }
+  async function renderClassTools() {
+    const box = document.getElementById("class-tools");
+    const cs = classSession();
+    const staff = cs && cs.mode === "staff";
+    box.classList.toggle("hidden", !staff);
+    if (!staff) return;
+    document.getElementById("class-tools-name").textContent = [cs.name, cs.school].filter(Boolean).join(" · ") + (cs.grade ? ` · Grade ${cs.grade}` : "");
+    document.getElementById("btn-class-pending-cards").classList.toggle("hidden", !getPendingCards().length);
+    const list = document.getElementById("class-devices-list");
+    list.textContent = "Loading…";
+    try {
+      const d = await Sync.listClassDevices();
+      const kiosks = d.kiosks.map((k) => `<div>📱 ${escapeAttr(k.label || "Class device")} — ${k.answers || 0} answers · last used ${escapeAttr(relativeSchoolDate(k.lastActiveDate))} <button class="link-btn" data-remove-device="kiosks:${escapeAttr(k.uid)}">remove</button></div>`).join("");
+      const mine = (Sync.getClassSession() || {}).label;
+      const staffRows = d.staff.map((s) => `<div>👩‍🏫 ${escapeAttr(s.label || "Teacher device")}${s.label === mine ? " (this device)" : ` <button class="link-btn" data-remove-device="staff:${escapeAttr(s.uid)}">remove</button>`}</div>`).join("");
+      list.innerHTML = (kiosks || "<div>No shared class devices yet.</div>") + `<div style="margin-top:8px"><strong>Teacher devices</strong></div>` + staffRows;
+    } catch (e) {
+      list.textContent = "Couldn't load devices — check your internet.";
+    }
+  }
+  document.addEventListener("click", async (e) => {
+    const rm = e.target.closest("[data-remove-device]");
+    if (!rm) return;
+    const [kind, uid] = rm.getAttribute("data-remove-device").split(":");
+    try { await Sync.removeClassDevice(kind, uid); toast("Device removed."); renderClassTools(); }
+    catch (err) { toast("Couldn't remove it — check your internet."); }
+  });
+  document.getElementById("btn-class-new-device-key").addEventListener("click", async () => {
+    try {
+      const key = await Sync.newKey("device");
+      const cs = classSession() || {};
+      showKeySheet([{ title: "Class device key", sub: [cs.name, cs.school].filter(Boolean).join(" · "), key, kind: "d", warn: "For ONE shared classroom tablet or Chromebook." }], () => openParentDashboard());
+    } catch (e) { toast("Couldn't make a key — check your internet and try again."); }
+  });
+  document.getElementById("btn-class-new-teacher-key").addEventListener("click", async () => {
+    try {
+      const key = await Sync.newKey("teacher");
+      const cs = classSession() || {};
+      showKeySheet([{ title: "Teacher key", sub: [cs.name, cs.school].filter(Boolean).join(" · "), key, kind: "t", warn: "For another TEACHER device. Keep private." }], () => openParentDashboard());
+    } catch (e) { toast("Couldn't make a key — check your internet and try again."); }
+  });
+  document.getElementById("btn-class-pending-cards").addEventListener("click", () => {
+    const cards = getPendingCards();
+    if (cards.length) showCardSheet(cards, () => openParentDashboard());
+  });
+  document.getElementById("btn-class-signout").addEventListener("click", async () => {
+    const b = document.getElementById("btn-class-signout");
+    if (b.dataset.armed !== "1") {
+      b.dataset.armed = "1";
+      b.textContent = "Tap again to sign this device out";
+      setTimeout(() => { b.dataset.armed = "0"; b.textContent = "Sign this device out of the class"; }, 5000);
+      return;
+    }
+    await Sync.leaveClass();
+    saveProfiles([]);
+    localStorage.removeItem(ACTIVE_KEY);
+    localStorage.removeItem(PENDING_CARDS_KEY);
+    state.parentProfile = null;
+    state.profile = null;
+    applyClassModeUI();
+    showScreen("household");
+  });
+
+  /* ---- camera scanning (BarcodeDetector where it exists, vendored jsQR otherwise) ---- */
+  let scanStream = null, scanTimer = null, jsQRLoading = null;
+  function loadJsQR() {
+    if (window.jsQR) return Promise.resolve(true);
+    if (!jsQRLoading) {
+      jsQRLoading = new Promise((resolve) => {
+        const el = document.createElement("script");
+        el.src = "js/vendor/jsQR.js";
+        el.onload = () => resolve(true);
+        el.onerror = () => { jsQRLoading = null; resolve(false); };
+        document.head.appendChild(el);
+      });
+    }
+    return jsQRLoading;
+  }
+  function extractCodeFromScan(text) {
+    const m = String(text).match(/[#?&](?:s|t|d)=([A-Za-z0-9-]{8,40})/);
+    if (m) return m[1];
+    const n = Sync.normalizeSecret(text);
+    return n.length === 10 || n.length === 16 ? n : null;
+  }
+  function stopSchoolScan() {
+    if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+    if (scanStream) { scanStream.getTracks().forEach((t) => t.stop()); scanStream = null; }
+    const wrap = document.getElementById("school-scan-wrap");
+    if (wrap) wrap.classList.add("hidden");
+  }
+  async function startSchoolScan() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setSchoolStatus("The camera isn't available here — type the code instead.");
+      return;
+    }
+    try {
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    } catch (e) {
+      setSchoolStatus("The camera is off for this site — allow it, or type the code instead.");
+      return;
+    }
+    const video = document.getElementById("school-scan-video");
+    video.srcObject = scanStream;
+    try { await video.play(); } catch (e) { /* user gesture already given */ }
+    document.getElementById("school-scan-wrap").classList.remove("hidden");
+    setSchoolStatus("Hold the QR code in front of the camera.");
+    const detector = "BarcodeDetector" in window ? new BarcodeDetector({ formats: ["qr_code"] }) : null;
+    if (!detector && !(await loadJsQR())) { setSchoolStatus("Scanning isn't available — type the code instead."); stopSchoolScan(); return; }
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    scanTimer = setInterval(async () => {
+      if (video.readyState < 2) return;
+      let text = null;
+      try {
+        if (detector) {
+          const found = await detector.detect(video);
+          if (found.length) text = found[0].rawValue;
+        } else {
+          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const q = window.jsQR(img.data, img.width, img.height);
+          if (q) text = q.data;
+        }
+      } catch (e) { /* keep trying */ }
+      const code = text && extractCodeFromScan(text);
+      if (code) {
+        stopSchoolScan();
+        document.getElementById("school-code-input").value = groupCode(code);
+        submitSchoolCode(code);
+      }
+    }, 350);
+  }
+  document.getElementById("btn-school-scan").addEventListener("click", startSchoolScan);
+  document.getElementById("btn-school-scan-stop").addEventListener("click", stopSchoolScan);
+
+  // A card/key QR code opens  <site>/#s=CODE  (child or parent card),  #t=KEY
+  // (teacher key) or  #d=KEY (class device). Fragments never reach a server or
+  // a cache. A scan is clear intent, so the code is submitted straight away.
+  function consumeSchoolLink() {
+    const m = (location.hash || "").match(/^#([std])=([A-Za-z0-9-]{8,40})$/i);
+    if (!m) return false;
+    const kind = m[1].toLowerCase();
+    history.replaceState(null, "", location.pathname + location.search);
+    openSchoolCodeScreen(kind === "s" ? "card" : kind === "t" ? "teacher" : "device");
+    document.getElementById("school-code-input").value = groupCode(Sync.normalizeSecret(m[2]));
+    submitSchoolCode(m[2]);
+    return true;
+  }
+
+  /* ---------------------------------------------------------------------
    * INIT
    * ------------------------------------------------------------------- */
   function init() {
@@ -6085,10 +6641,12 @@
       navigator.serviceWorker.register("service-worker.js").catch(() => {});
     }
     refreshMuteButton();
+    applyClassModeUI();
+    if (consumeSchoolLink()) return; // a scanned card/key link starts the school sign-in
 
     const hasHousehold = typeof Sync !== "undefined" && Sync.getHouseholdCode();
     const skipped = localStorage.getItem(SYNC_SKIP_KEY);
-    if (hasHousehold || skipped || typeof Sync === "undefined") {
+    if (classSession() || hasHousehold || skipped || typeof Sync === "undefined") {
       if (hasHousehold) watchProfilesList();
       enterApp();
     } else {

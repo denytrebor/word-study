@@ -37,7 +37,8 @@ function newDevice(uid) {
     auth: () => ({ signInAnonymously: () => Promise.resolve(), currentUser: { uid } }),
   };
   const win = { FIREBASE_CONFIG: { projectId: PROJECT }, crypto: webcrypto };
-  const Sync = new Function("window", "localStorage", "firebase", "crypto", "TextEncoder", syncSrc + "; return Sync;")(win, localStorage, firebase, webcrypto, TextEncoder);
+  const location = { hostname: "test.invalid", search: "" };
+  const Sync = new Function("window", "localStorage", "firebase", "crypto", "TextEncoder", "location", syncSrc + "; return Sync;")(win, localStorage, firebase, webcrypto, TextEncoder, location);
   return { Sync, uid, db: real, store };
 }
 
