@@ -149,6 +149,78 @@ const ShopCatalog = (function () {
     { id: "cyber-fairy-girl", label: "Cyber Fairy", tier: "standard", defaultPrice: 220, defaultActive: false },
     { id: "frost-warrior", label: "Frost Warrior", tier: "standard", defaultPrice: 220, defaultActive: false },
     { id: "dragon-rider-blue-boy", label: "Dragon Rider", tier: "standard", defaultPrice: 220, defaultActive: false },
+
+    // --- added 2026-10-04 (28 new characters, art made with Codex) ----------
+    // `inRotation: false` keeps these OUT of the automatic shop rotation (see
+    // rotatingIds in app.js), so adding them did not change what the store is
+    // showing. They are in the catalog and visible in Manage Avatars, where a
+    // parent can switch any of them In Store. To fold them into the rotation
+    // later, delete the `inRotation: false` flags (that also reshuffles which
+    // characters appear in each window, since the pools get bigger).
+
+    // --- chase tier: 350 ---
+    // deep warm brown skin; short black coils.
+    { id: "thunder-griffin-boy", label: "Thunder Griffin", tier: "chase", defaultPrice: 350, defaultActive: false, inRotation: false },
+    // dark warm brown skin; long black braid.
+    { id: "tide-manta-girl", label: "Tide Manta", tier: "chase", defaultPrice: 350, defaultActive: false, inRotation: false },
+    // warm light-medium skin; short straight black hair.
+    { id: "crystal-golem-boy", label: "Crystal Guardian", tier: "chase", defaultPrice: 350, defaultActive: false, inRotation: false },
+    // warm golden brown skin; textured black double buns.
+    { id: "storm-cloud-rider-girl", label: "Cloud Dragon Rider", tier: "chase", defaultPrice: 350, defaultActive: false, inRotation: false },
+    // warm light-medium brown skin; short dark wavy hair.
+    { id: "clockwork-mech-boy", label: "Clockwork Captain", tier: "chase", defaultPrice: 350, defaultActive: false, inRotation: false },
+    // warm fair skin; wavy auburn ponytail.
+    { id: "pegasus-rider-girl", label: "Pegasus Rider", tier: "chase", defaultPrice: 350, defaultActive: false, inRotation: false },
+    // dark warm brown skin; long black hair in a low bun.
+    { id: "sky-whale-captain-boy", label: "Sky Whale Captain", tier: "chase", defaultPrice: 350, defaultActive: false, inRotation: false },
+    // warm medium brown skin; long straight dark hair.
+    { id: "dove-harp-guardian-girl", label: "Dove Guardian", tier: "chase", defaultPrice: 350, defaultActive: false, inRotation: false },
+
+    // --- standard tier: 100 ---
+    // dark warm brown skin; short black afro.
+    { id: "wheelchair-basketball-boy", label: "Court Champion", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm medium brown skin; short swept dark hair.
+    { id: "marine-biologist-boy", label: "Marine Biologist", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm light-medium skin; neat straight black hair.
+    { id: "pilot-boy", label: "Pilot", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm medium brown skin; long straight black braid.
+    { id: "gardener-boy", label: "Gardener", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // dark warm brown skin; short black curls.
+    { id: "chess-champion-boy", label: "Chess Champion", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm medium brown skin; short dark curls.
+    { id: "drummer-boy", label: "Drummer", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // dark warm brown skin; long black braid.
+    { id: "veterinarian-girl", label: "Veterinarian", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm light-medium skin; straight black bob.
+    { id: "teacher-girl", label: "Teacher", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // dark warm brown skin; black braided ponytail.
+    { id: "track-sprinter-girl", label: "Sprint Star", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm golden brown skin; dark hair in a high bun.
+    { id: "gymnast-girl", label: "Gymnast", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm tan skin; dark curly ponytail.
+    { id: "volleyball-girl", label: "Volleyball Star", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm medium brown skin; long straight dark hair.
+    { id: "violinist-girl", label: "Violinist", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm golden-olive brown skin; shoulder-length dark waves.
+    { id: "photographer-girl", label: "Photographer", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // dark warm brown skin; braids gathered in a bun.
+    { id: "choir-singer-girl", label: "Choir Singer", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // dark warm brown skin; thick black ponytail.
+    { id: "rock-climber-girl", label: "Rock Climber", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+    // warm fair skin; short copper-red hair.
+    { id: "beekeeper-boy", label: "Beekeeper", tier: "standard", defaultPrice: 100, defaultActive: false, inRotation: false },
+
+    // --- standard tier: 150 ---
+    // warm medium brown skin; soft dark waves.
+    { id: "shepherd-boy", label: "Little Shepherd", tier: "standard", defaultPrice: 150, defaultActive: false, inRotation: false },
+    // warm fair skin; blond twin braids.
+    { id: "butterfly-costume-girl", label: "Butterfly Friend", tier: "standard", defaultPrice: 150, defaultActive: false, inRotation: false },
+
+    // --- standard tier: 220 ---
+    // dark warm brown skin; short black curls.
+    { id: "scuba-diver-boy", label: "Reef Diver", tier: "standard", defaultPrice: 220, defaultActive: false, inRotation: false },
+    // warm fair, freckles skin; short blond hair.
+    { id: "robotics-builder-boy", label: "Robot Builder", tier: "standard", defaultPrice: 220, defaultActive: false, inRotation: false },
   ];
 
   // vars are CSS custom-property overrides applied via [data-theme="<id>"]

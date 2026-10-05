@@ -1,4 +1,4 @@
-const CACHE_NAME = "word-study-v30";
+const CACHE_NAME = "word-study-v31";
 // Character avatars are precached so an equipped character still shows up
 // offline, active-in-shop or not (a kid's already-equipped avatar must keep
 // rendering even after a parent deactivates it in Manage Avatars). addAll()
@@ -21,6 +21,14 @@ const CHARACTER_AVATARS = [
   "samurai-girl", "scientist-boy", "scientist-girl", "shadow-reaper", "skater-boy",
   "skater-girl", "soccer-boy", "soccer-girl", "space-paladin-boy", "unicorn-onesie-girl",
   "viking-boy", "viking-girl", "wheelchair-girl", "witch-girl", "wizard-boy",
+  // Added 2026-10-04 (catalog-only, not in the rotation):
+  "thunder-griffin-boy", "tide-manta-girl", "crystal-golem-boy", "storm-cloud-rider-girl",
+  "clockwork-mech-boy", "pegasus-rider-girl", "sky-whale-captain-boy", "dove-harp-guardian-girl",
+  "wheelchair-basketball-boy", "marine-biologist-boy", "pilot-boy", "gardener-boy",
+  "chess-champion-boy", "drummer-boy", "veterinarian-girl", "teacher-girl",
+  "track-sprinter-girl", "gymnast-girl", "volleyball-girl", "violinist-girl",
+  "photographer-girl", "choir-singer-girl", "rock-climber-girl", "beekeeper-boy",
+  "shepherd-boy", "butterfly-costume-girl", "scuba-diver-boy", "robotics-builder-boy",
 ].map((id) => `./assets/avatars/${id}.webp`);
 const ASSETS = [
   "./",

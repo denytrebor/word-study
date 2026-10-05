@@ -5268,7 +5268,9 @@
 
   function rotatingIds(now) {
     const w = rotationWindow(now);
-    const chars = ShopCatalog.CHARACTERS;
+    // inRotation:false characters are catalog-only: parents can pin them in
+    // via Manage Avatars, but the automatic rotation never picks them.
+    const chars = ShopCatalog.CHARACTERS.filter((c) => c.inRotation !== false);
     return new Set([
       ...pickRotating(chars.filter((c) => c.tier === "chase"), CHASE_SLOTS, w),
       ...pickRotating(chars.filter((c) => c.tier !== "chase" && !c.defaultActive), STANDARD_SLOTS, w),
