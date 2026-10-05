@@ -44,7 +44,6 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
 
     // ---- helpers for the school model -------------------------------------
-    function docPath(p) { return /databases/$(database)/documents/$(p); }
     function okHash(h) { return h is string && h.matches('^[0-9a-f]{64}$'); }
     function okId(i) { return i is string && i.matches('^[A-Za-z0-9_-]{8,64}$'); }
     function okClass(c) { return c is string && c.matches('^[a-z0-9]{20}$'); }
